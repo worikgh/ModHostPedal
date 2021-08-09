@@ -1,0 +1,559 @@
+#!/usr/bin/perl -w
+use strict;
+use IPC::Open2;
+use Fcntl;
+use Symbol 'gensym'; # vivify a separate handle for STDERR
+use File::Spec;
+use Data::Dumper;
+use Socket;
+use IO::Socket; 
+
+
+$Data::Dumper::Indent = 1;
+$Data::Dumper::Sortkeys = 1;
+$Data::Dumper::Purity = 1;
+
+# Communication with other programmes.  `mod_host` handles LV2
+# effects.  `griode` runs the Launchpad X controller.
+my $mod_host_port_f = 5556;
+my $mod_host_port_p = 5555;
+my $griode_port = 8887;
+
+## Pedals.  This defines what pedals there are.  Each pedal is named
+## by a single character, and has a section in %state.  Pedals are
+## devices attached to the server that get set up by "song" files
+## (FIXME "song" is wrong word.)  and when they signal the server it
+## swaps inputs around.
+my @PEDALS = ('a', 'b', 'c'); ## Three pedals currently
+
+## Root directory of the system
+my $ROOT =  $ENV{PATH_MI_ROOT};
+-d $ROOT or die "'$ROOT' is not a directory:";
+$ROOT =~ s/^\s*//; ## Clean white space from start
+$ROOT =~ s/\s*$//; ## Clean white space from end
+$ROOT =~ /\/$/ or $ROOT .= '/'; ## Ensure ends with a '/'
+
+# The history file keeps track of what changes this has made to jack
+# that have to be undone next run and mod-host and the state file
+# keeps track of (at least) the pedal state.  FIXME The history and
+# state files is in a bad place.  Should not be able to write to the
+# directory the script is in
+
+my $history_fn = "$ROOT.history";
+
+-e $history_fn or `touch $history_fn`;
+-r $history_fn or die "$!: Cannot read $history_fn ";
+-w $history_fn or die "$!: Cannot read $history_fn ";
+
+my $state_fn = "$ROOT.state";
+
+-e $state_fn or `touch $state_fn`;
+-r $state_fn or die "$!: Cannot read $state_fn ";
+-w $state_fn or die "$!: Cannot read $state_fn ";
+
+
+my %state = (); # Global!
+
+sub getState() {
+    open(my $in, $state_fn) or die "$!: Cannot read $state_fn";
+    my $state_text = join('', <$in>);
+    {
+	## $state_text is Perl defining global state
+	no strict;
+	my $state_ref = eval $state_text;
+	if(defined($state_ref)){
+	    %state = %$state_ref;
+	}else{
+	    %state = ();
+	}
+    }
+    ## Check for pedals
+    defined($state{'pedals'}) or $state{'pedals'} = {};
+
+    ## Some redesign here and we can loose the `@PEDALS` global
+    foreach my $pedal (@PEDALS){
+	defined $state{'pedals'}->{$pedal} and next;
+	$state{'pedals'}->{$pedal} = {'capture' => {}};
+    }
+
+    ## Current capture set
+    defined($state{'capture'}) or $state{'capture'} = {};
+    
+    return %state;
+}
+
+sub saveState( $ ) {
+    my $state_ref = shift or die;
+    my %state = %$state_ref or die;
+    open(my $out, ">$state_fn") or die "$!: Cannot rewrite $state_fn";
+    print $out Data::Dumper->Dump([\%state], ['state']);
+    # foreach my $key (sort keys (%state)){
+    # 	print $out "$key\t$state{$key}\n";
+    # }
+}
+
+
+## Called when a `pedal...` command received
+sub pedal( $ ) {
+    my $pedal = shift or die;
+
+    defined($state{'pedals'}->{$pedal}) or die "No pedal '$pedal' in state";
+
+    ## Enable a pedal by connecting the "system:capture_N" connections
+    ## in Jack, and disable the existing pedal (if there is one)
+    ## similarly.  Collect the connection/disconnection commands here
+    my @capture_cmds = ();
+    
+    ## The disconnection commands go first.  Need to check, it may be
+    ## better to do these last to avoid audible effects... Need to
+    ## experiment
+    foreach my $capture (keys %{$state{'capture'}}){
+	push(@capture_cmds, "disconnect $capture");
+    }    
+    $state{'capture'} = {};
+
+    ## Collect the connections to turn on the new command
+    foreach my $capture (keys %{$state{"pedals"}->{$pedal}->{'capture'}}){
+	## $capture of forom: system:capture_2 effect_1002:in
+	push(@capture_cmds, "connect $capture");
+	$state{'capture'}->{$capture} = 1; 
+    }
+
+    ## Use mod_host to adust the connections.  Much faster than
+    ## `jack_connect` and `jack_disconnet`
+    # print STDERR "Calling mod_host\n";
+    mod_host(\@capture_cmds);
+    # print STDERR "Called mod_host(".join(', ', @capture_cmds).")\n";
+}
+
+sub setup_pedal( $ ) {
+    ## Like 'A 1010Pedal' Where A' names the pedal and
+    ## songs/Pedals/1010Pedal defines the effects
+    
+    my $name_file = shift or die;
+    $name_file =~ /^(\S)\s(\S+)$/ or die "\$name_file $name_file";
+
+    my $pedal = $1;
+
+    my $file = $ROOT . "songs/Pedals/$2";
+    -r $file or die "$!: '$file'";
+
+    # Make the state entry for the pedal if it does not exist
+    exists $state{'pedals'}->{$pedal} or die "Pedal: '$pedal' not in state";
+    
+    ## Pedals are only allowed to effect mod-host and jack
+    my @mod_host = ();
+    my @jack = ();
+
+    ## Read file and make the connections.  This is a duplicate of
+    ## other code in this programme
+    my $ln = 0;
+    open(my $in, $file) or die "$!: Cannot open '$file'";
+    while(my $line = <$in>){
+	$ln++;
+	chomp $line;
+
+	## Skip blank lines and comments
+	$line =~ /^\s*$/ and next;
+	$line =~ /^\s*\#/ and next;
+
+	$line =~ /^(\S+)\s+(.+)\s*$/ or
+	    die "Line $ln of file '$file' has line ".
+	    "'$line' that is not understood";
+	my $t = $1;
+	my $c = $2;
+	if($t eq 'mh'){
+	    push(@mod_host, $c);
+	}elsif($t eq 'jack'){
+
+	    if($c =~ /^system:capture_\d+\s/){
+		## Treat system:capture_N connections differently.
+		## This is so switching pedals is simply a matter of
+		## reconnecting system:capture_N
+		$state{"pedals"}->{$pedal}->{'capture'}->{$c} = 1;
+	    }else{
+		push(@jack, $c);
+	    }
+	}else{
+	    die "Do not understand pedal command '$c' from '$file' line $ln";
+	}
+    }    
+    if(@mod_host){
+	&mod_host(\@mod_host);
+    }
+    write_history(map{'mod-host '. $_} @mod_host);
+    if(@jack){
+	&jack_connections(\@jack);
+    }
+}
+
+sub clear_jack_io() {
+    ## Diconnet system in and out from jack
+    ## Called as swapping pedals
+    my @lines = `jack_lsp -c`;
+    my $state = "";
+    my $port = "";
+    foreach my $line (@lines){
+	chomp $line;
+	if($line =~ /^system:capture_/){
+	    $state = "capture";
+	    $port = $line;
+	    next;
+	}
+
+	if($line =~ /^system:playback_/){
+	    $state = "playback";
+	    $port = $line;
+	    next;
+	}
+
+	if($line =~ /^\S/){
+	    ## Not a system audio IO
+	    $state = "";
+	    next;
+	}
+	if($line =~ /^\s/ && $state eq "capture"){
+	    my $cmd = "jack_disconnect $port $line";
+	    `$cmd`;
+	    next;
+	}
+	if($line =~ /^\s/ && $state eq "playback"){
+	    my $cmd = "jack_disconnect $line  $port";
+	    `$cmd`;
+	    next;
+	}
+    }
+}
+
+sub jack_connections( $ ) {
+    my @jack = @{$_[0]};
+    foreach my $cmd (@jack){
+	## Use mod_host here.  Much quicker
+	`jack_connect $cmd`;
+	write_history(('jack '.$cmd));
+    }
+
+}
+
+## From select(2) section of perlfunc
+sub fhbits {
+    my @fhlist = @_;
+    my $bits = "";
+    for my $fh (@fhlist) {
+	vec($bits, fileno($fh), 1) = 1;
+    }
+    return $bits;
+}
+
+sub mod_host( $ ){
+    my $cmds = shift or die;
+    my @cmds = @$cmds;
+
+    my $remote = "localhost";
+    my $port = $mod_host_port_p;
+
+    my $sock = new IO::Socket::INET( PeerAddr => 'localhost',
+				     PeerPort => $port, 
+				     Proto => 'tcp') or die $!; 
+    
+    foreach my $cmd (@cmds){
+
+	print $sock "$cmd\n";
+
+	my $result = '';
+	my $r = fhbits($sock);
+	my $res = '';
+	my ($nfound, $timeleft) =
+	    select(my $rout = $r, my $wout = undef, my $eout = undef,
+		   1.01);
+	
+	if($nfound){
+	    my $os = 0;
+	    while(my $c = read($sock, $res, 1)){
+		if($c != 1 or
+		   ord($res) == 0){
+		    last;
+		}
+		$result .=  $res;
+	    }
+	}
+	if($result =~ /resp ([\-0-9]+)/){
+	    # If status is a negative number an error has
+	    # occurred. The table below shows the number of each
+	    # error.
+	    
+	    # status 	error
+	    # -1 	ERR_INSTANCE_INVALID
+	    # -2 	ERR_INSTANCE_ALREADY_EXISTS
+	    # -3 	ERR_INSTANCE_NON_EXISTS
+	    # -4 	ERR_INSTANCE_UNLICENSED
+	    # -101 	ERR_LV2_INVALID_URI
+	    # -102 	ERR_LV2_INSTANTIATION
+	    # -103 	ERR_LV2_INVALID_PARAM_SYMBOL
+	    # -104 	ERR_LV2_INVALID_PRESET_URI
+	    # -105 	ERR_LV2_CANT_LOAD_STATE
+	    # -201 	ERR_JACK_CLIENT_CREATION
+	    # -202 	ERR_JACK_CLIENT_ACTIVATION
+	    # -203 	ERR_JACK_CLIENT_DEACTIVATION
+	    # -204 	ERR_JACK_PORT_REGISTER
+	    # -205 	ERR_JACK_PORT_CONNECTION
+	    # -206 	ERR_JACK_PORT_DISCONNECTION
+	    # -301 	ERR_ASSIGNMENT_ALREADY_EXISTS
+	    # -302 	ERR_ASSIGNMENT_INVALID_OP
+	    # -303 	ERR_ASSIGNMENT_LIST_FULL
+	    # -304 	ERR_ASSIGNMENT_FAILED
+	    # -401 	ERR_CONTROL_CHAIN_UNAVAILABLE
+	    # -402 	ERR_LINK_UNAVAILABLE
+	    # -901 	ERR_MEMORY_ALLOCATION
+	    # -902 	ERR_INVALID_OPERATION
+
+	    #     A status zero or positive means that the command was
+	    #     executed successfully. In case of the add command,
+	    #     the status returned is the instance number. The
+	    #     value field currently only exists for the param_get
+	    #     command.
+	    if($1 < 0 and $1 != -2){
+		print  ">> FAIL $cmd >>  $result\n";
+	    }else{
+		print  ">> SUCCESS $cmd >>  $result\n";
+	    }
+	}
+    }
+}    
+
+sub write_history( @ ) {
+    # warn "Write history to: $history_fn ";
+    open(my $out, ">>$history_fn") or die $!;
+    foreach my $l (@_) {
+	print $out "$l\n";
+    }
+}
+
+sub consume_stdin() {
+    my $offset = 0;
+    my $buffer;
+    while(read(STDIN,  $buffer, 1, $offset++)){};
+    return split(/\n/, $buffer);
+}
+
+
+#--------------------------------------------------------
+#--------------------------------------------------------
+#--------------------------------------------------------
+# Set up the parameters of a instrument.  Set up LV2 effects, JACK
+# connections, and GRIODE parameters
+
+# A file of commands is prepared and the file name passed to this
+# programme
+
+
+# The mod-host works having a set of "effects".  Each one is added
+# with the command:
+
+# add <URL> <N>
+
+# The <URL> identifies the effect (the command lv2ls lists all the
+# URLs of installed LV2 effects).
+
+# <N> is a unique number.  The Jack inputs/outputs are
+# `effect_N:input`/`effect_N:output`
+
+# When a valid `add` command in received a record is created by adding
+# a line: "<N> <URL>\n"
+
+# When a parameter is using command `param_set` a line is added `<N>
+# <param_name,value>...<param_name,value>`
+
+# On startup the parameters are read into a hash keyed by N, value is
+# a HASHREF.  One enty is `url => <URL>`.  Each parameter uses the
+# parameter name as a key and the value is a array of values. (are
+# they allways numbers?)
+
+#
+
+
+my @stdin;
+if(scalar(@ARGV) == 0){
+    # No argument.  Read stdin
+    @stdin = consume_stdin();
+}elsif(scalar(@ARGV) == 1){
+    # One arg, a path
+    open(my $in, $ARGV[0]) or die "$!: $ARGV[0]";
+    @stdin = <$in>;
+}elsif(@ARGV == 2){
+    $ARGV[0] eq "-c" or die "Use -c";
+    @stdin = ($ARGV[1]);
+}
+
+# Get the state
+%state = &getState();
+
+
+$state{"ran"} = scalar(localtime(time()));
+
+# Place tostore commands before being executed.
+my @griode = ();
+my @modhost = ();
+my @jack = ();
+my @pedals = ();
+
+# Commands on command line.
+# `mh`  a mod host parameter to set
+# Else a file name that holds commannds to initialise a instrument
+my $ln = 0;
+sub meter_bridge {
+    # my $pid_fn = "$ROOT.meter_bridge.pid";
+    # if(-e $pid_fn){
+    # 	my $pid = `cat $pid_fn`;
+    # 	chomp $pid;
+    # 	kill 'HUP' , $pid;
+    # }
+    my @jack_c = `jack_lsp -c`;
+    ## Who is connected to stdout?
+    my %stdout = ();
+    my $flag = 0;
+    foreach my $j (@jack_c){
+
+	# Test exit condition
+	$flag == 1 and $j =~ /^\S/ and $flag = 0;
+
+	$flag == 0 and $j =~ /^system:playback_/ and $flag = 1 and next;
+
+	$flag == 1 or next;
+
+	$j =~ /^\s+(\S+):(\S+)/ or next;
+	$stdout{"$1:$2"} = 1;
+    }
+
+    # `keys %stdout` is all jack routes to stdout.  If they are
+    # already connected to meter-bridge get rid of them
+    $flag = 0;
+    my $meter_pid;
+    foreach my $j (@jack_c){
+
+	# Test exit condition
+	$flag == 1 and $j =~ /^\S/ and $flag = 0;
+
+	if($flag == 0 and $j =~ /^bridge-(\d+):meter_2/){
+	     $flag = 1;
+	     $meter_pid = $1;
+	     next;
+	}
+	$flag == 1 or next;
+	
+
+	$j =~ /^\s+(\S+):(\S+)/ or next;
+	delete($stdout{"$1:$2"});
+    }
+    # `keys %stdout` is all jack routes to stdout that are not
+    # connected to bridge-3044:monitor_2.
+    my @cmd = map{"connect $_ bridge-$meter_pid:meter_2"} keys %stdout;
+    if(@cmd){
+	mod_host(\@cmd);
+    }
+    
+}
+foreach my $line (@stdin){
+    $ln++;
+    
+    ## Skip comments and blank lines
+    $line =~ /\S/ or next;
+    $line =~ /^\s*\#/ and next;
+    chomp $line;
+    
+    $line =~ /^(\S+)\s?(.*)?/ or die $line;
+    my $arg1 = $1;
+    my $args = defined($2) ? $2 : "";
+    if($arg1 eq 'p'){
+	# can only be one.  If there were more than one the last one
+	# wins
+	pedal($args);
+    }elsif($arg1 eq 'clear_jack_io'){
+	## Disconnect jack inputs and outputs from system
+	&clear_jack_io();	
+    }elsif($arg1 eq 'b'){
+	# can only be one.  If there were more than one the last one
+	# wins
+	&meter_bridge;
+    }elsif($arg1 eq 'griode'){
+	# Send a command to griode
+	push(@griode, $args);
+    }elsif($arg1 eq 'mh'){
+	# Could be a `add` instruction to create a mod-host efect or
+	# `param_set` to set parameters
+	if($args =~ /^\s*(add)\s+.+$/ ||
+	   $args =~ /^\s*param_set\s/ ||
+	   $args =~ /^\s*remove\s/){
+	    push(@modhost,  $args);
+	}
+    }elsif($arg1 eq 'jack'){
+	push(@jack, $args);
+    }elsif($arg1 eq 'clear'){
+	# If there is no history there is nothing to clear
+	my $s = -s $history_fn;
+	if($s > 0){
+
+	    # Read history and undo commands run earlier and undo them
+	    my @history = `cat $history_fn`;
+
+	    my %jack_hist = ();
+	    my %modh_hist = ();
+
+	    foreach my $cmd (@history) {
+		# jack and mod-host commands are the only ones we need to undo
+		if($cmd =~ /^jack\s(\S+ \S+)\s*$/){
+		    $jack_hist{$1} = $1;
+		}elsif($cmd =~ /add\s\S+\s+(\d+)\s*$/){
+		    $modh_hist{$1} = $1;
+		}	    
+	    }
+
+	    map {`jack_disconnect $_`} keys %jack_hist;
+
+	    my @mh = ();
+	    foreach my $h (keys %modh_hist){
+		push(@mh, "remove $h");
+	    }
+
+	    mod_host(\@mh);
+
+	    # warn "Deleted history\n";
+
+	    unlink $history_fn or die "$! '$history_fn'";
+	}
+    }elsif($arg1 eq 'pedal'){
+	push(@pedals, $args);
+    }else{
+	die "Do not understand line $ln: '$line'"
+    }
+
+}
+
+
+if(@griode){
+    #warn "Griode commands: ".scalar(@griode)." \n";    
+    open(my $out_fh, "|-", "/usr/bin/nc localhost $griode_port")
+	or die $!;
+    map {print $out_fh "$_\n"} @griode;
+    close $out_fh or die $!;
+    write_history(map{'griode '.$_} @griode);
+}
+if(@modhost){
+    # print "mod-host\n";
+    mod_host(\@modhost);
+    write_history(map{'mod-host '. $_} @modhost);
+}
+if(@jack){
+    # warn "jack\n";
+    &jack_connections(\@jack);
+}
+if(@pedals){
+    foreach my $pedal (@pedals){
+	setup_pedal($pedal);
+    }
+}
+##
+
+
+&saveState(\%state);
+
