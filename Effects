@@ -1,0 +1,38 @@
+#!/bin/sh
+MOD_PEDAL_PATH=`pwd`
+echo Examine the modep stuff and shut it down....
+
+if [ service modep-mod-host status|grep running ]
+then    
+    sudo service modep-mod-host stop
+fi
+
+if [ service modep-mod-ui status|grep running ]
+then
+    sudo service modep-mod-ui stop
+fi
+
+echo Kill any versions of mod-host still running and start our own
+killall mod-host
+
+echo Wait for mod-host to stop
+while  [ `lsof -i :5555` ]
+do
+    sleep 1
+done
+
+echo restart mod-host
+LV2_PATH=/usr/modep/lv2/ /home/patch/mod-host/mod-host -v > /tmp/mod-host.log &
+
+echo Wait for mod-host to get going
+while  [ ! `lsof -i :5555` ]
+do
+    sleep 1
+done
+
+echo Process modep files
+MOD_PEDAL_PATH=$MOD_PEDAL_PATH perl process_modep.pl
+
+echo start driver....
+$PATH_MI_ROOT/pedal_driver/driver
+echo Driver has finished infinite loop
