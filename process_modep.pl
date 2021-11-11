@@ -22,7 +22,7 @@ sub process_file( $$ ) {
     
     ## Channels between effects and the outside 
     my %channels = ();
-    my $channel = ''; # The last channel seen
+    my $channel = ''; # The last channel seen 
 
     my %effects = ();
     my $effect = ""; # The last effect seen
@@ -71,7 +71,7 @@ sub process_file( $$ ) {
 
 	## Source for channel
 	if($line =~ /^\s+ingen:tail\s+<(\S+)\/(\S+)>\s*[.;]\s*$/){
-
+	    #     ingen:tail <_jcm800pre_/out> ;
 	    my ($effect, $port_name) = ($1, $2);
 	    $source = "$prefix:$effect/$port_name";
 	    $jack_ports{$source} = 1;
@@ -118,7 +118,7 @@ sub process_file( $$ ) {
 	## System sink for channel
 	if($line =~ /^\s+ingen:head\s+<([^\/]+)>\s*[.;]\s*$/){
 	    ## ingen:head <playback_1> .
-	    $sink = $1;
+	    $sink = $1; # playback_1
 	    $jack_ports{$sink} = 1;
 	    
 	    if(defined($source)){
@@ -181,11 +181,11 @@ sub process_file( $$ ) {
 	    next;
 	}
 
-	## A effect/port section: <Degrade/left_in>
+	## A effect/port section: <CABINET/CLevel> or <Degrade/left_in>
 	if($line =~ /^<(\S+)\/(\S+)>\s*$/){
 	    ## Could be a audio port or could be a control port
-	    $effect =  $1;
-	    $port = $2;
+	    $effect =  $1; # CABINET or Degrade
+	    $port = $2; # CLevel or left_in
 	    next;
 	}
 
@@ -220,8 +220,10 @@ sub process_file( $$ ) {
 
 	# Later these will be used to assign integers > 0 
 	$effect_name_instance{$instance_number} = -1;
-	
-	my $line = "add $effects{$e}->{URL} $instance_number";
+
+	my $cmd = "add $effects{$e}->{URL} $instance_number";
+	print STDERR "\$cmd $cmd\n";
+	my $line = "$cmd";
 	push(@ret, $line);
 
 	    ## Make param set lines
@@ -360,17 +362,24 @@ foreach my $name ( sort keys %pedal_settings){
 # }
 
 foreach my $name (sort keys %pedal_commands){
+
+    ## Loop over each effect and set it up in `mod-host` using `control`
+    
     open(my $now, ">/tmp/now") or die $!;
     print $now join("\n", @{$control_commands{$name}})."\n";
     close $now or die $!;
 
     print "Set up $name pedal\n";
-    my @res = `$ENV{PATH_MI_ROOT}/control /tmp/now`;
+    my @res = `$ENV{MOD_PEDAL_PATH}/control /tmp/now`;
+    my $_name = "$ENV{MOD_PEDAL_PATH}/$name";
     if(! grep {/FAIL/} @res ){
-	open(my $pedal, ">$ENV{PATH_MI_ROOT}/pedal_driver/$name") or
+	print STDERR "\$_name: $_name\n";
+	open(my $pedal, ">$_name") or
 	    die "$!: $name";
 	print $pedal join("\n", @{$pedal_commands{$name}})."\n";
     }else{
-	unlink $name;
+	print STDERR "Unlink: $_name\n";
+	unlink $_name;
     }
+    print STDERR "Name done: $name\n";
 }
