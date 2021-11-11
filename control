@@ -13,11 +13,9 @@ $Data::Dumper::Indent = 1;
 $Data::Dumper::Sortkeys = 1;
 $Data::Dumper::Purity = 1;
 
-# Communication with other programmes.  `mod_host` handles LV2
-# effects.  `griode` runs the Launchpad X controller.
+# Communication with mod_host for LV2 effects.
 my $mod_host_port_f = 5556;
 my $mod_host_port_p = 5555;
-my $griode_port = 8887;
 
 ## Pedals.  This defines what pedals there are.  Each pedal is named
 ## by a single character, and has a section in %state.  Pedals are
@@ -340,12 +338,11 @@ sub consume_stdin() {
 #--------------------------------------------------------
 #--------------------------------------------------------
 #--------------------------------------------------------
-# Set up the parameters of a instrument.  Set up LV2 effects, JACK
-# connections, and GRIODE parameters
+
+# Set up LV2 effects, and JACK connections
 
 # A file of commands is prepared and the file name passed to this
 # programme
-
 
 # The mod-host works having a set of "effects".  Each one is added
 # with the command:
@@ -530,14 +527,6 @@ foreach my $line (@stdin){
 }
 
 
-if(@griode){
-    #warn "Griode commands: ".scalar(@griode)." \n";    
-    open(my $out_fh, "|-", "/usr/bin/nc localhost $griode_port")
-	or die $!;
-    map {print $out_fh "$_\n"} @griode;
-    close $out_fh or die $!;
-    write_history(map{'griode '.$_} @griode);
-}
 if(@modhost){
     # print "mod-host\n";
     mod_host(\@modhost);
