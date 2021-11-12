@@ -139,6 +139,9 @@ int main(int argc, char * argv[]) {
   uint8_t key_b[KEY_MAX/8 + 1];
   char * mi_root;
   char home_dir[PATH_MAX + 1];
+
+  // Signal handler to quit programme.  Not necessary, strictly speaking
+  signal(SIGHUP,signal_handler);
   
   mi_root = getenv("PATH_MI_ROOT");
   assert(snprintf(home_dir, PATH_MAX, "%s/pedal_driver", mi_root) <= PATH_MAX);
