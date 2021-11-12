@@ -1,6 +1,15 @@
 #!/usr/bin/perl -w
 use strict;
 
+# For temporary files to transfer commands to `control`
+use File::Temp;
+
+## Where modep puts its pedal definitions
+my $MODEP_PEDALS = "/var/modep/pedalboards/";
+
+## Where `control` is to be found
+my $MOD_PEDAL_PATH = $ENV{MOD_PEDAL_PATH} or die "Define MOD_PEDAL_PATH";
+
 ## Reads the modep configuration files for pedals and sets them all up
 ## in mod-host.  For each pedal it writes a file in the current
 ## directory to implement the pedal by connecting jack IO
@@ -267,7 +276,7 @@ my $prefix = 'a';
 
 ## All directories with a ".pedalboard" suffix have a pedal board
 ## definition
-opendir(my $dir, "/var/modep/pedalboards/") or die $!;
+opendir(my $dir, $MODEP_PEDALS) or die $!;
 my @names = grep { /\.pedalboard$/ } readdir($dir);
 
 ## Put commands to pass to `control` here
@@ -276,7 +285,7 @@ my @commands = ();
 foreach my $name (sort @names){
     $name =~ /^(\S+)\.pedalboard$/ or die $name;
     my $board = $1;
-    my $fn = &get_board_ttl("/var/modep/pedalboards/", $name, $board);
+    my $fn = &get_board_ttl($MODEP_PEDALS, $name, $board);
     
     print STDERR "Process: $fn\n";
     my @foo = &process_file($prefix, $fn);
@@ -362,16 +371,17 @@ foreach my $name ( sort keys %pedal_settings){
 # }
 
 foreach my $name (sort keys %pedal_commands){
-
+    
     ## Loop over each effect and set it up in `mod-host` using `control`
     
-    open(my $now, ">/tmp/now") or die $!;
-    print $now join("\n", @{$control_commands{$name}})."\n";
-    close $now or die $!;
+    print "Seting up $name pedal\n";
 
-    print "Set up $name pedal\n";
-    my @res = `$ENV{MOD_PEDAL_PATH}/control /tmp/now`;
-    my $_name = "$ENV{MOD_PEDAL_PATH}/$name";
+    my ($now, $tmpFn) = File::Temp->new() or die $!;
+    print $now join("\n", @{$control_commands{$name}})."\n";
+    seek($now, 0, 0);
+
+    my @res = `$MOD_PEDAL_PATH/control $tmpFn`;
+    my $_name = "$MOD_PEDAL_PATH/$name";
     if(! grep {/FAIL/} @res ){
 	print STDERR "\$_name: $_name\n";
 	open(my $pedal, ">$_name") or
