@@ -31,7 +31,7 @@ jack_client_t *client;
 static void signal_handler(int sig)
 {
   jack_client_close(client);
-  fprintf(stderr, "signal received, exiting ...\n");
+  fprintf(stderr, "signal %d received, exiting ...\n", sig);
   exit(0);
 }
 void
@@ -76,8 +76,9 @@ int load_pedal(char p){
   const char * path_mi_root;
   char ch;
   struct timeval a, b;
-  /* We want buffer overruns... */
-  char line[1024];
+  /* We do not want buffer overruns... */
+  const uint LINE_MAX = 1024;
+  char line[LINE_MAX - 1];
 
   path_mi_root = getenv("PATH_MI_ROOT");
   
@@ -103,6 +104,7 @@ int load_pedal(char p){
   assert(fd);
   i = 0;
   while((ch = fgetc(fd)) != EOF){  /* while(!feof(fd)){ */
+    assert(i < LINE_MAX);// We really do not want buffer over runs. 
     line[i] = ch;
     if((ch >= 'a'  && ch <= 'z') ||
        (ch >= 'A'  && ch <= 'Z') ||
@@ -136,10 +138,10 @@ int main(int argc, char * argv[]) {
   unsigned yalv, last_yalv;
   uint8_t key_b[KEY_MAX/8 + 1];
   char * mi_root;
-  char home_dir[PATH_MAX];
+  char home_dir[PATH_MAX + 1];
   
   mi_root = getenv("PATH_MI_ROOT");
-  sprintf(home_dir, "%s/pedal_driver", mi_root);
+  assert(snprintf(home_dir, PATH_MAX, "%s/pedal_driver", mi_root) <= PATH_MAX);
   chdir(home_dir);
 
   printf("Driver getting started in %s\n", home_dir);
