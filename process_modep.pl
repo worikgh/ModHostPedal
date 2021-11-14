@@ -2,7 +2,7 @@
 use strict;
 
 # For temporary files to transfer commands to `control`
-use File::Temp;
+use File::Temp qw/tmpnam/;
 
 ## Where modep puts its pedal definitions
 my $MODEP_PEDALS = "/var/modep/pedalboards/";
@@ -386,7 +386,7 @@ foreach my $name (sort keys %control_commands){
     
     print "Seting up $name pedal\n";
 
-    my ($now, $tmpFn) = File::Temp->new() or die $!;
+    my ($now, $tmpFn) = tmpnam() or die $!;
     print $now join("\n", @{$control_commands{$name}})."\n";
     seek($now, 0, 0);
 
