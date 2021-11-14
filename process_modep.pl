@@ -34,7 +34,7 @@ sub process_file( $$ ) {
     my $channel = ''; # The last channel seen 
 
     my %effects = ();
-    my $effect = ""; # The last effect seen
+    my $EFFECT = ""; # The last effect seen
 
     # The last port seen
     my $port = "";
@@ -60,7 +60,7 @@ sub process_file( $$ ) {
 	if($line =~ /^<:[a-z]/ or
 	   $line =~ /^<\S+\/:\S+>\s*$/ or
 	    $line =~ /^\s+a\s+atom:.+/){
-	    $effect = "";
+	    $EFFECT = undef;
 	    $port = "";
 	    next;
 	}
@@ -171,66 +171,75 @@ sub process_file( $$ ) {
 	
 	# The start of a effect
 	if($line =~ /^<([^\/\s]+)>\s*$/ and !defined($jack_ports{$1})){
-	    # A effect
+	    # An effect
+
+	    ## Any effects that are used will be in here.  If not here ignore it
 	    defined($effects{$1}) or next;
 
-	    $effect = $1;
+	    $EFFECT = $1;
 	    $port = undef;
 	    next;
 	}
 
-	if($line =~ /^\s+ingen:enabled ([truefals]{4,5})\s*;\s*$/){
-	    $effects{$effect}->{enabled} = $1;
-	    next;
-	}
+	if(defined($EFFECT)){
+	    if($line =~ /^\s+ingen:enabled ([truefals]{4,5})\s*;\s*$/){
+		$effects{$EFFECT}->{enabled} = $1;
+		next;
+	    }
 
-	## URL for effect
-	if($line =~ /^\s+lv2:prototype\s+<(\S+)>\s*;\s*$/){
-	    $effects{$effect}->{URL} = $1;
-	    next;
+	    ## URL for effect
+	    if($line =~ /^\s+lv2:prototype\s+<(\S+)>\s*;\s*$/){
+		$effects{$EFFECT}->{URL} = $1;
+		next;
+	    }
 	}
 
 	## A effect/port section: <CABINET/CLevel> or <Degrade/left_in>
 	if($line =~ /^<(\S+)\/(\S+)>\s*$/){
 	    ## Could be a audio port or could be a control port
-	    $effect =  $1; # CABINET or Degrade
-	    $port = $2; # CLevel or left_in
+	    if(defined($effects{$1})){
+		## Only do this for effects that are connected
+		$EFFECT =  $1; # CABINET or Degrade
+		$port = $2; # CLevel or left_in
+	    }
 	    next;
 	}
 
 	## Detect if port a control or audio port
-	if($effect && $port &&
+	if($EFFECT && $port &&
 	   ($line =~ /^\s+a\s+lv2:(Audio)Port\s*,\s*$/ or
 	   $line =~ /^\s+a\s+lv2:(Control)Port\s*,\s*$/)){
-	    $effects{$effect}->{ports}->{$port}->{type} = $1;
+	    $effects{$EFFECT}->{ports}->{$port}->{type} = $1;
 	    next;
 	}
 
 	# Input or output?
-	if($effect && $port && (
+	if($EFFECT && $port && (
 	       $line =~ /^\s+lv2:(Input)Port\s*\.\s*$/ or
 	       $line =~ /^\s+lv2:(Output)Port\s*\.\s*$/)
 	   ){
-	    $effects{$effect}->{ports}->{$port}->{direction} = $1;
+	    $effects{$EFFECT}->{ports}->{$port}->{direction} = $1;
 	    next;
 	}
 
 	# Value for a control port
-	if($effect && $port && $line =~ /^\s+ingen:value\s+(\S+)\s*;\s*$/){
-	    $effects{$effect}->{ports}->{$port}->{value} = $1;
+	if($EFFECT && $port && $line =~ /^\s+ingen:value\s+(\S+)\s*;\s*$/){
+	    $effects{$EFFECT}->{ports}->{$port}->{value} = $1;
 	    next;
 	}
     }
 
     ## Make lines to add effects
-    foreach my $e (sort keys %effects){
+    foreach my $e (sort grep {/\S/} keys %effects){
 	# "$prefix:Effect" name stands in for instance number
 	my $instance_number = "$prefix:$e";
 
 	# Later these will be used to assign integers > 0 
 	$effect_name_instance{$instance_number} = -1;
 
-	my $cmd = "add $effects{$e}->{URL} $instance_number";
+	my $_e1 = $effects{$e};
+	my $_url = $_e1->{URL};
+	my $cmd = "add $_url $instance_number";
 	print STDERR "\$cmd $cmd\n";
 	my $line = "$cmd";
 	push(@ret, $line);
@@ -241,7 +250,7 @@ sub process_file( $$ ) {
 	foreach my $p (@ports){
 	    if($effects{$e}->{ports}->{$p}->{type} eq 'Control'){
 		if($effects{$e}->{ports}->{$p}->{direction} eq "Output"){
-		    ## No value fo ra output port.  Not used here
+		    ## No value for a output port.  Not used here
 		    next;
 		}
 		my $value = $effects{$e}->{ports}->{$p}->{value};
@@ -347,6 +356,7 @@ foreach my $name ( sort keys %pedal_settings){
 	    $jack_cmd =~ s/playback/system:playback/ and $flag = 1;
 	    $jack_cmd =~ s/capture/system:capture/ and $flag = 1;
 	    if($flag == 1){
+		## To be run at pedal use time.
 		push(@{$pedal_commands{$name}}, $jack_cmd);
 	    }else{
 		push(@{$control_commands{$name}}, "jack $1");
@@ -370,7 +380,7 @@ foreach my $name ( sort keys %pedal_settings){
 #     print "\n";
 # }
 
-foreach my $name (sort keys %pedal_commands){
+foreach my $name (sort keys %control_commands){
     
     ## Loop over each effect and set it up in `mod-host` using `control`
     
@@ -381,11 +391,10 @@ foreach my $name (sort keys %pedal_commands){
     seek($now, 0, 0);
 
     my @res = `$MOD_PEDAL_PATH/control $tmpFn`;
-    my $_name = "$MOD_PEDAL_PATH/$name";
+    my $_name = "$MOD_PEDAL_PATH/PEDALS/$name";
     if(! grep {/FAIL/} @res ){
 	print STDERR "\$_name: $_name\n";
-	open(my $pedal, ">$_name") or
-	    die "$!: $name";
+	open(my $pedal, ">$_name") or die "$!: $_name";
 	print $pedal join("\n", @{$pedal_commands{$name}})."\n";
     }else{
 	print STDERR "Unlink: $_name\n";
