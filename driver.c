@@ -41,7 +41,7 @@ jack_shutdown (void *arg)
 }
 
 /* Pedals are defined by jack plumbing.  Each line in a pedal file is
-   the deinition (src/sink) of a jack pipe.  Thi ssets up those
+   the destination (src/sink) of a jack pipe.  This sets up those
    pipes */
 void process_line(char * line){
   const char * src_port, * dst_port;
@@ -86,13 +86,13 @@ int load_pedal(char p){
   
   switch (p){
   case 'A':
-    sprintf(scriptname, "%s/pedal_driver/A", path_mi_root);
+    sprintf(scriptname, "%s/PEDALS/A", path_mi_root);
     break;
   case 'B':
-    sprintf(scriptname, "%s/pedal_driver/B", path_mi_root);
+    sprintf(scriptname, "%s/PEDALS/B", path_mi_root);
     break;
   case 'C':
-    sprintf(scriptname, "%s/pedal_driver/C", path_mi_root);
+    sprintf(scriptname, "%s/PEDALS/C", path_mi_root);
     break;
   default:
     break;
@@ -144,7 +144,7 @@ int main(int argc, char * argv[]) {
   signal(SIGHUP,signal_handler);
   
   mi_root = getenv("PATH_MI_ROOT");
-  assert(snprintf(home_dir, PATH_MAX, "%s/pedal_driver", mi_root) <= PATH_MAX);
+  assert(snprintf(home_dir, PATH_MAX, "%s", mi_root) <= PATH_MAX);
   chdir(home_dir);
 
   printf("Driver getting started in %s\n", home_dir);
@@ -160,6 +160,7 @@ int main(int argc, char * argv[]) {
     exit (1);
   }
 
+  // The keyboard/pedal
   int fd;
   fd = open("/dev/input/event0", O_RDONLY);
   if(fd < 0) {
