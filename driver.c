@@ -78,7 +78,7 @@ int load_pedal(char p){
   struct timeval a, b;
   /* We do not want buffer overruns... */
   const uint LINE_MAX = 1024;
-  char line[LINE_MAX - 1];
+  char line[LINE_MAX];
 
   path_mi_root = getenv("PATH_MI_ROOT");
   
