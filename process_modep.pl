@@ -8,7 +8,7 @@ use File::Temp qw/tmpnam/;
 my $MODEP_PEDALS = "/var/modep/pedalboards/";
 
 ## Where `control` is to be found
-my $MOD_PEDAL_PATH = $ENV{MOD_PEDAL_PATH} or die "Define MOD_PEDAL_PATH";
+my $PATH_MI_ROOT = $ENV{PATH_MI_ROOT} or die "Define PATH_MI_ROOT";
 
 ## Reads the modep configuration files for pedals and sets them all up
 ## in mod-host.  For each pedal it writes a file in the current
@@ -390,8 +390,8 @@ foreach my $name (sort keys %control_commands){
     print $now join("\n", @{$control_commands{$name}})."\n";
     seek($now, 0, 0);
 
-    my @res = `$MOD_PEDAL_PATH/control $tmpFn`;
-    my $_name = "$MOD_PEDAL_PATH/PEDALS/$name";
+    my @res = `$PATH_MI_ROOT/control $tmpFn`;
+    my $_name = "$PATH_MI_ROOT/PEDALS/$name";
     if(! grep {/FAIL/} @res ){
 	print STDERR "\$_name: $_name\n";
 	open(my $pedal, ">$_name") or die "$!: $_name";
