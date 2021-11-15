@@ -1,37 +1,44 @@
 #!/bin/sh
-MOD_PEDAL_PATH=`pwd`
-echo Examine the modep stuff and shut it down....
+PATH_MI_ROOT=/var/modep/ModHostPedal
 
-if [ service modep-mod-host status|grep running ]
-then    
-    sudo service modep-mod-host stop
-fi
+# echo Examine the modep stuff and shut it down....
 
-if [ service modep-mod-ui status|grep running ]
-then
-    sudo service modep-mod-ui stop
-fi
+# TEST1=`service modep-mod-host status | grep running `
+# echo TEST1: $TEST1
+# if [ -z $TEST1  ]
+# then
+#     echo All good
+# else
+#     sudo service modep-mod-host stop
+# fi
 
-echo Kill any versions of mod-host still running and start our own
-killall mod-host
+# TEST2=`service modep-mod-ui status|grep running`
+# if [ ! -z $TEST2 ]
+# then
+#     sudo service modep-mod-ui stop
+# fi
 
-echo Wait for mod-host to stop
-while  [ `lsof -i :5555` ]
-do
-    sleep 1
-done
+# echo Kill any versions of mod-host still running and start our own
+# killall mod-host
 
-echo restart mod-host
-LV2_PATH=/usr/modep/lv2/ /home/patch/mod-host/mod-host -v > /tmp/mod-host.log &
+# echo Wait for mod-host to stop
+# while  [ `lsof -i :5555` ]
+# do
+#     sleep 1
+# done
 
-echo Wait for mod-host to get going
-while  [ ! `lsof -i :5555` ]
-do
-    sleep 1
-done
+# echo restart mod-host
+# LV2_PATH=/usr/modep/lv2/ /home/patch/mod-host/mod-host -v > /tmp/mod-host.log &
+
+# echo Wait for mod-host to get going
+# while  [ ! -z `lsof -i :5555` ]
+# do
+#     sleep 1
+# done
+
 
 echo Process modep files
-MOD_PEDAL_PATH=$MOD_PEDAL_PATH perl process_modep.pl
+PATH_MI_ROOT=$PATH_MI_ROOT perl process_modep.pl
 
 echo start driver....
 $PATH_MI_ROOT/pedal_driver/driver
