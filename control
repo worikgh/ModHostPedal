@@ -49,7 +49,6 @@ my $state_fn = "$ROOT.state";
 -r $state_fn or die "$!: Cannot read $state_fn ";
 -w $state_fn or die "$!: Cannot read $state_fn ";
 
-
 my %state = (); # Global!
 
 sub getState() {
