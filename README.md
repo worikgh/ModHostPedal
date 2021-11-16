@@ -22,4 +22,10 @@ In a teminal switch to the ModHostPedal directory
 
 Run ./Effects
 
+## Configuring the pedal
 
+The pedal is a USB keyboard with three keys. 'A', 'B', and 'C'
+
+They load  instructions from the files in PEDALS
+
+Put a link in PEDALS from 'A' -> WhateverPedalFile and the left most pedal will trigger loading that pedal
