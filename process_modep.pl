@@ -5,7 +5,7 @@ use strict;
 use File::Temp qw/tmpnam/;
 
 ## Where modep puts its pedal definitions
-my $MODEP_PEDALS = "/var/modep/pedalboards/";
+my $MODEP_PEDALS = "/var/modep/pedalboards";
 
 ## Where `control` is to be found
 my $PATH_MI_ROOT = $ENV{PATH_MI_ROOT} or die "Define PATH_MI_ROOT";
@@ -271,10 +271,10 @@ sub process_file( $$ ) {
 ## Get the ttl file that holds all the pedal board definitions
 sub get_board_ttl( $$$ ){
     my ($root, $name, $board) = @_;
-    my $fn = "$root$name/$board.ttl";
+    my $fn = "$root/$name/$board.ttl";
     if(! -r $fn){
 	$board = ucfirst($board);
-	$fn = "$root$name/$board.ttl";
+	$fn = "$root/$name/$board.ttl";
     }
     return $fn;
 }
@@ -380,6 +380,9 @@ foreach my $name ( sort keys %pedal_settings){
 #     print "\n";
 # }
 
+my $pedal_dir = "$PATH_MI_ROOT/PEDALS";
+
+-d $pedal_dir or mkdir $pedal_dir or die "$!: Cannot mkdir $pedal_dir";
 foreach my $name (sort keys %control_commands){
     
     ## Loop over each effect and set it up in `mod-host` using `control`
@@ -391,7 +394,8 @@ foreach my $name (sort keys %control_commands){
     seek($now, 0, 0);
 
     my @res = `$PATH_MI_ROOT/control $tmpFn`;
-    my $_name = "$PATH_MI_ROOT/PEDALS/$name";
+
+    my $_name = $pedal_dir/$name;
     if(! grep {/FAIL/} @res ){
 	print STDERR "\$_name: $_name\n";
 	open(my $pedal, ">$_name") or die "$!: $_name";
