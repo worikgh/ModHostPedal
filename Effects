@@ -37,7 +37,7 @@ PATH_MI_ROOT=/var/modep/ModHostPedal
 # done
 
 
-echo Process modep files
+echo Process modep files.  Set up effects
 PATH_MI_ROOT=$PATH_MI_ROOT perl process_modep.pl
 
 echo start driver....
