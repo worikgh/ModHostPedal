@@ -387,15 +387,16 @@ foreach my $name (sort keys %control_commands){
     
     ## Loop over each effect and set it up in `mod-host` using `control`
     
-    print "Seting up $name pedal\n";
-
+    warn "Setting up $name pedal\n";
+    my $cmds = join("\n", @{$control_commands{$name}})."\n";
     my ($now, $tmpFn) = tmpnam() or die $!;
-    print $now join("\n", @{$control_commands{$name}})."\n";
+    print $now $cmds;
+    warn $cmds;
     seek($now, 0, 0);
 
     my @res = `$PATH_MI_ROOT/control $tmpFn`;
-
-    my $_name = $pedal_dir/$name;
+    warn "Finished with control\n";
+    my $_name = "$pedal_dir/$name";
     if(! grep {/FAIL/} @res ){
 	print STDERR "\$_name: $_name\n";
 	open(my $pedal, ">$_name") or die "$!: $_name";
