@@ -1,0 +1,28 @@
+#!/bin/sh
+PATH_MI_ROOT=/var/modep/ModHostPedal
+
+echo Examine the modep stuff and shut it down....
+sudo killall mod-host
+while  [ `lsof -i :5555` ]
+do
+    echo Waiting for mod-host to stop
+    sleep 1
+done
+
+sudo -u modep service modep-mod-host start
+
+TEST1=`service modep-mod-host status | grep running `
+while [ -z $TEST1  ]
+then
+    echo Waiting for mod-host to start
+    sleep 1
+fi
+
+TEST2=`service modep-mod-ui status|grep running`
+while [ -z $TEST2  ]
+then
+    echo Waiting for mod-ui to start
+    sleep 1
+fi
+
+sudo -u patch killall driver
