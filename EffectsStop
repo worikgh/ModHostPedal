@@ -1,28 +1,39 @@
-#!/bin/sh
-PATH_MI_ROOT=/var/modep/ModHostPedal
+#!/usr/bin/perl -w
+use strict;
 
-echo Examine the modep stuff and shut it down....
-sudo killall mod-host
-while  [ `lsof -i :5555` ]
-do
-    echo Waiting for mod-host to stop
-    sleep 1
-done
+## Some primative logging
+# Step 1 make a file name form date and pid
+my $fname = "/tmp/" . scalar(localtime()) . "_$$.log";
+$fname =~ s/\s/_/g;
 
-sudo -u modep service modep-mod-host start
+# Step 2 get a log file handle
+open(my $log, ">$fname") or die "$!: $fname";
 
-TEST1=`service modep-mod-host status | grep running `
-while [ -z $TEST1  ]
-then
-    echo Waiting for mod-host to start
-    sleep 1
-fi
+# Step 3 Initialise it
+print $log "$0\n";
 
-TEST2=`service modep-mod-ui status|grep running`
-while [ -z $TEST2  ]
-then
-    echo Waiting for mod-ui to start
-    sleep 1
-fi
+my $led_flash = "/home/patch/ModHostPedal/led_flash";
 
-sudo -u patch killall driver
+` sudo $led_flash 1 0.05 10 `;
+
+
+## If patch is running mod-host shut it down
+if ( grep {/mod-host/} grep { $_ !~ /grep/ } `ps -U patch -x` ) {
+    print $log "Kill patch mod-host\n";
+    print $log `sudo killall mod-host`;
+
+    while( `sudo lsof -i :5555` ) {
+	print $log "Waiting for mod-host to stop\n";
+	sleep 1;
+    }
+}
+print $log "Start modep-mod-host!\n";
+print $log `sudo service modep-mod-host start`;
+print $log `sudo service modep-mod-ui start`;
+
+while ( ! ` sudo lsof -i :5555 `){
+    print $log "Waiting for mod-host to start\n";
+    sleep 1;
+}
+` sudo $led_flash 20 1.0 5 `;
+print $log "mod-host-ui running and Effects turned off\n";
