@@ -4,6 +4,9 @@ use strict;
 # For temporary files to transfer commands to `control`
 use File::Temp qw/tmpnam/;
 
+my $VERBOSE = shift;
+defined $VERBOSE or $VERBOSE  = 0;
+
 ## Where modep puts its pedal definitions
 my $MODEP_PEDALS = "/var/modep/pedalboards";
 
@@ -24,6 +27,7 @@ my %effect_name_instance = ();
 sub process_file( $$ ) {
     my $prefix = shift or die;
     my $fn = shift or die;
+    print STDERR "Process $prefix  $fn\n";
     -r $fn or die $!;
     open(my $fh, $fn) or die $!;
     my @lines = <$fh>;
@@ -240,7 +244,7 @@ sub process_file( $$ ) {
 	my $_e1 = $effects{$e};
 	my $_url = $_e1->{URL};
 	my $cmd = "add $_url $instance_number";
-	print STDERR "\$cmd $cmd\n";
+	# print STDERR "\$cmd $cmd\n";
 	my $line = "$cmd";
 	push(@ret, $line);
 
@@ -270,7 +274,7 @@ sub process_file( $$ ) {
 
 ## Get the ttl file that holds all the pedal board definitions
 sub get_board_ttl( $$$ ){
-    my ($root, $name, $board) = @_;
+   my ($root, $name, $board) = @_;
     my $fn = "$root/$name/$board.ttl";
     if(! -r $fn){
 	$board = ucfirst($board);
@@ -294,9 +298,10 @@ my @commands = ();
 foreach my $name (sort @names){
     $name =~ /^(\S+)\.pedalboard$/ or die $name;
     my $board = $1;
+    $VERBOSE  and print STDERR "board: $board\n";
     my $fn = &get_board_ttl($MODEP_PEDALS, $name, $board);
     
-    print STDERR "Process: $fn\n";
+    # print STDERR "Process: $fn\n";
     my @foo = &process_file($prefix, $fn);
     push(@commands, [$board, \@foo]);
     $prefix++;
@@ -305,6 +310,7 @@ foreach my $name (sort @names){
 ## Replace instance numbers with integers
 my $inst = 1; ## Initial number
 foreach my $key (sort keys %effect_name_instance){
+    $VERBOSE  and print STDERR $effect_name_instance{$key}." -> $inst\n";
     $effect_name_instance{$key} = $inst++;
 }
 
@@ -341,12 +347,15 @@ my %control_commands = ();
 my %pedal_commands = ();
 
 foreach my $name ( sort keys %pedal_settings){
+
+    $VERBOSE  and print STDERR "Set up $name\n";
     $pedal_commands{$name} = [];
     $control_commands{$name} = [];
     
     my @commands = @{$pedal_settings{$name}};
 
     foreach my $cmd (@commands){
+	$VERBOSE  and print STDERR "cmd: $cmd\n";
 	if($cmd =~ /^jack_connect\s+(.+)\s*$/){
 	    ## If this command involves system:capture or system:playback
 	    ## then it is to be run at pedal use time.  Else run it now
@@ -387,23 +396,23 @@ foreach my $name (sort keys %control_commands){
     
     ## Loop over each effect and set it up in `mod-host` using `control`
     
-    warn "Setting up $name pedal\n";
+    # print STDERR  "Setting up $name pedal\n";
     my $cmds = join("\n", @{$control_commands{$name}})."\n";
     my ($now, $tmpFn) = tmpnam() or die $!;
     print $now $cmds;
-    warn $cmds;
+    # print STDERR  $cmds;
     seek($now, 0, 0);
 
     my @res = `$PATH_MI_ROOT/control $tmpFn`;
-    warn "Finished with control\n";
+    # print STDERR  "Finished with control\n";
     my $_name = "$pedal_dir/$name";
     if(! grep {/FAIL/} @res ){
-	print STDERR "\$_name: $_name\n";
+	# print STDERR "\$_name: $_name\n";
 	open(my $pedal, ">$_name") or die "$!: $_name";
 	print $pedal join("\n", @{$pedal_commands{$name}})."\n";
     }else{
-	print STDERR "Unlink: $_name\n";
+	# print STDERR "Unlink: $_name\n";
 	unlink $_name;
     }
-    print STDERR "Name done: $name\n";
+    # print STDERR "Name done: $name\n";
 }
