@@ -392,6 +392,17 @@ foreach my $name ( sort keys %pedal_settings){
 my $pedal_dir = "$PATH_MI_ROOT/PEDALS";
 
 -d $pedal_dir or mkdir $pedal_dir or die "$!: Cannot mkdir $pedal_dir";
+
+## Delete old pedals
+opendir(my $pedals, $pedal_dir) or die "$!: $pedal_dir ";
+my @files =
+    grep{/[a-zA-Z0-9_]\S/} ## Filter out the pedal links which are single character
+readdir($pedals);
+foreach my $file (@files){
+    my $df = "$pedal_dir/$file"; 
+    unlink $df or die "$!: $file";
+}
+
 foreach my $name (sort keys %control_commands){
     
     ## Loop over each effect and set it up in `mod-host` using `control`
