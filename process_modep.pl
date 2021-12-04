@@ -27,7 +27,7 @@ my %effect_name_instance = ();
 sub process_file( $$ ) {
     my $prefix = shift or die;
     my $fn = shift or die;
-    print STDERR "Process $prefix  $fn\n";
+    $VERBOSE and print STDERR "Process $prefix  $fn\n";
     -r $fn or die $!;
     open(my $fh, $fn) or die $!;
     my @lines = <$fh>;
@@ -422,7 +422,7 @@ foreach my $name (sort keys %control_commands){
 	open(my $pedal, ">$_name") or die "$!: $_name";
 	print $pedal join("\n", @{$pedal_commands{$name}})."\n";
     }else{
-	# print STDERR "Unlink: $_name\n";
+	print STDERR join("\n", @res)."\n";
 	unlink $_name;
     }
     # print STDERR "Name done: $name\n";

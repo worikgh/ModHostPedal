@@ -1,70 +1,25 @@
-#!/usr/bin/perl -w
-use strict;
+#!/bin/bash
+export MOD_HOST_PEDAL_DIR='/home/patch/ModHostPedal'
+export PATH_MI_ROOT='/home/patch/ModHostPedal'
+export JACK_PROMISCUOUS_SERVER=jack
+export LV2_PATH=/usr/modep/lv2
+# ## Flash the LED.  Arguments: Duration Frequency Count
+LED_FLASH=$MOD_HOST_PEDAL_DIR/led_flash
 
-## Flash the LED.  Arguments: Duration Frequency Count
-my $led_flash = "/home/patch/ModHostPedal/led_flash";
-my $MOD_HOST_EXE='/home/patch/mod-host/mod-host';
-my $MOD_HOST_PEDAL_DIR='/home/patch/ModHostPedal';
-my $LV2_PATH='/usr/modep/lv2/';
+`$LED_FLASH 2 0.5 2 `
 
-## Some primative logging
-# Step 1 make a file name form date and pid
-my $fname = "/tmp/EffectsStart " .  scalar(localtime()) . " $$.log";
-$fname =~ s/\s/_/g;
+service modep-mod-host stop
+sudo killall mod-host
 
-# Step 2 get a log file handle
-open(my $log, ">$fname") or die "$!: $fname";
+MOD_HOST_EXE='/home/patch/mod-host/bin/mod-host '
+runuser  --preserve-environment -u patch  -- $MOD_HOST_EXE 
 
-# Step 3 Initialise it
-print $log "$0\n";
+$MOD_HOST_PEDAL_DIR/process_modep.pl
 
-# Step 4 Let user kow (if there is an interactive user...)
-print "Logging to $fname\n";
-
-print $log "Flash the led\n";
-print $log ` sudo $led_flash 1 0.05 10 `;
-
-
-if ( grep { /running/} ` sudo service modep-mod-host status ` ) {
-    print $log "Shut down modep-mod-host\n";
-    print $log ` sudo service modep-mod-host stop `;
-}
-
-if ( grep { /running/} ` sudo service modep-mod-ui status ` ) {
-    print $log "Shut down modep-mod-ui\n";
-    print $log ` sudo service modep-mod-ui stop `;
-}
+runuser  --preserve-environment -u patch   $MOD_HOST_PEDAL_DIR/driver 2>&1 > /tmp/driver.log & 
+`$LED_FLASH 2 0.5 3 `
 
 
 
-#print Wait for mod-host to stop
-while  ( ` sudo lsof -i :5555 ` ) {
-    print $log "Waiting for modep-mod-host to stop\n";
-    sleep 1;
-}
-
-print $log "Restart mod-host\n";
-print $log `LV2_PATH=$LV2_PATH $MOD_HOST_EXE -v > /tmp/mod-host.log & `;
-
-while  ( !  `lsof -i :5555` ) {
-    print $log "Waiting for mod-host\n";
-    sleep 1;
-}
 
 
-## Set up pedals
-print $log `$MOD_HOST_PEDAL_DIR/process_modep.pl`;
-
-# print Process modep files.  Set up effects
-
-if ( ! grep { /driver/} grep { $_ !~ /grep/ } ` ps -U patch  `) {
-    my $pid = fork;
-    if ( $pid ) {
-	print $log "Driver started\n";
-    }else{
-	`$MOD_HOST_PEDAL_DIR/driver 2>&1 > /tmp/driverlog `;
-    }
-}
-
-` sudo $led_flash 2 0.5 10 `;
-print $log "Effects started\n";

@@ -52,6 +52,7 @@ void process_line(char * line){
   dst_port = strtok(NULL, " ");
   assert(dst_port);
   r = jack_connect(client, src_port, dst_port);
+  fprintf(stderr, "jack_connect(client, %s, %s) -> %d\n", src_port, dst_port, r);
   assert(!r || r == EEXIST); 
 }
 
@@ -100,6 +101,7 @@ int load_pedal(char p){
 
   /* Clear the Jack input and output */
   clear_jack();
+  fprintf(stderr, "Opening script: %s\n", scriptname);
   fd = fopen(scriptname, "r");
   assert(fd);
   i = 0;
@@ -159,7 +161,7 @@ int main(int argc, char * argv[]) {
     }
     exit (1);
   }
-
+  fprintf(stderr, "Connected to JACK\nOpen /dev/input/event0");
   // The keyboard/pedal
   int fd;
   fd = open("/dev/input/event0", O_RDONLY);

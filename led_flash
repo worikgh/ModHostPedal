@@ -1,0 +1,11 @@
+#!/usr/bin/perl -w
+use strict;
+
+my $duration = shift;
+my $frequency = shift;
+my $count = shift;
+
+for( my $i = 0 ; $i < $count; $i++ ) {
+    print ` echo $duration > /sys/kernel/pisound/led `;
+    select(undef, undef, undef, $frequency);
+}

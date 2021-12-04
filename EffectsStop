@@ -1,39 +1,16 @@
-#!/usr/bin/perl -w
-use strict;
+#!/bin/bash
+export MOD_HOST_PEDAL_DIR='/home/patch/ModHostPedal'
+export PATH_MI_ROOT='/home/patch/ModHostPedal'
+export JACK_PROMISCUOUS_SERVER=jack
+export LV2_PATH=/usr/modep/lv2
 
-## Some primative logging
-# Step 1 make a file name form date and pid
-my $fname = "/tmp/" . scalar(localtime()) . "_$$.log";
-$fname =~ s/\s/_/g;
+# ## Flash the LED.  Arguments: Duration Frequency Count
+LED_FLASH=$MOD_HOST_PEDAL_DIR/led_flash
 
-# Step 2 get a log file handle
-open(my $log, ">$fname") or die "$!: $fname";
+`$LED_FLASH 2 .1 2`
 
-# Step 3 Initialise it
-print $log "$0\n";
+sudo killall mod-host
+service modep-mod-host start
+service modep-mod-ui start
 
-my $led_flash = "/home/patch/ModHostPedal/led_flash";
-
-` sudo $led_flash 1 0.05 10 `;
-
-
-## If patch is running mod-host shut it down
-if ( grep {/mod-host/} grep { $_ !~ /grep/ } `ps -U patch -x` ) {
-    print $log "Kill patch mod-host\n";
-    print $log `sudo killall mod-host`;
-
-    while( `sudo lsof -i :5555` ) {
-	print $log "Waiting for mod-host to stop\n";
-	sleep 1;
-    }
-}
-print $log "Start modep-mod-host!\n";
-print $log `sudo service modep-mod-host start`;
-print $log `sudo service modep-mod-ui start`;
-
-while ( ! ` sudo lsof -i :5555 `){
-    print $log "Waiting for mod-host to start\n";
-    sleep 1;
-}
-` sudo $led_flash 20 1.0 5 `;
-print $log "mod-host-ui running and Effects turned off\n";
+`$LED_FLASH 2 .1 4`
