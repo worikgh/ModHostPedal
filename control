@@ -26,6 +26,7 @@ my @PEDALS = ('a', 'b', 'c'); ## Three pedals currently
 
 ## Root directory of the system
 my $ROOT =  $ENV{PATH_MI_ROOT};
+$ROOT or $ROOT = `pwd` and chomp $ROOT;
 -d $ROOT or die "'$ROOT' is not a directory:";
 $ROOT =~ s/^\s*//; ## Clean white space from start
 $ROOT =~ s/\s*$//; ## Clean white space from end
@@ -226,7 +227,9 @@ sub jack_connections( $ ) {
     my @jack = @{$_[0]};
     foreach my $cmd (@jack){
 	## Use mod_host here.  Much quicker
+	# print STDERR  "Running: jack_connect $cmd\n";
 	`jack_connect $cmd`;
+	
 	write_history(('jack '.$cmd));
     }
 
@@ -242,6 +245,7 @@ sub fhbits {
     return $bits;
 }
 
+## 
 sub mod_host( $ ){
     my $cmds = shift or die;
     my @cmds = @$cmds;
@@ -255,6 +259,7 @@ sub mod_host( $ ){
     
     foreach my $cmd (@cmds){
 
+	print STDERR  "mod-host: $cmd\n";
 	print $sock "$cmd\n";
 
 	my $result = '';
@@ -262,7 +267,7 @@ sub mod_host( $ ){
 	my $res = '';
 	my ($nfound, $timeleft) =
 	    select(my $rout = $r, my $wout = undef, my $eout = undef,
-		   1.01);
+		   0.5);
 	
 	if($nfound){
 	    my $os = 0;
@@ -274,6 +279,7 @@ sub mod_host( $ ){
 		$result .=  $res;
 	    }
 	}
+	# print STDERR  "Result: '$result'\n";
 	if($result =~ /resp ([\-0-9]+)/){
 	    # If status is a negative number an error has
 	    # occurred. The table below shows the number of each
@@ -319,7 +325,7 @@ sub mod_host( $ ){
 }    
 
 sub write_history( @ ) {
-    # warn "Write history to: $history_fn ";
+    # print STDERR  "Write history to: $history_fn ";
     open(my $out, ">>$history_fn") or die $!;
     foreach my $l (@_) {
 	print $out "$l\n";
@@ -376,9 +382,11 @@ if(scalar(@ARGV) == 0){
     # One arg, a path
     open(my $in, $ARGV[0]) or die "$!: $ARGV[0]";
     @stdin = <$in>;
-}elsif(@ARGV == 2){
-    $ARGV[0] eq "-c" or die "Use -c";
-    @stdin = ($ARGV[1]);
+}else{
+    # One command
+    my $c = shift(@ARGV);
+    $c eq "-c" or die "Use -c";
+    @stdin = (join(" ", @ARGV));
 }
 
 # Get the state
@@ -475,13 +483,13 @@ foreach my $line (@stdin){
 	# Send a command to griode
 	push(@griode, $args);
     }elsif($arg1 eq 'mh'){
-	# Could be a `add` instruction to create a mod-host efect or
-	# `param_set` to set parameters
-	if($args =~ /^\s*(add)\s+.+$/ ||
-	   $args =~ /^\s*param_set\s/ ||
-	   $args =~ /^\s*remove\s/){
+
+	# if($args =~ /^\s*(add)\s+.+$/ ||
+	#    $args =~ /^\s*param_set\s/ ||
+	#    $args =~ /^\s*param_get\s/ ||
+	#    $args =~ /^\s*remove\s/){
 	    push(@modhost,  $args);
-	}
+	# }
     }elsif($arg1 eq 'jack'){
 	push(@jack, $args);
     }elsif($arg1 eq 'clear'){
@@ -513,7 +521,7 @@ foreach my $line (@stdin){
 
 	    mod_host(\@mh);
 
-	    # warn "Deleted history\n";
+	    # print STDERR  "Deleted history\n";
 
 	    unlink $history_fn or die "$! '$history_fn'";
 	}
@@ -528,17 +536,22 @@ foreach my $line (@stdin){
 
 if(@modhost){
     # print "mod-host\n";
+    print STDERR  "Before mod-host\n";
     mod_host(\@modhost);
     write_history(map{'mod-host '. $_} @modhost);
+    print STDERR  "After mod-host\n";
 }
 if(@jack){
-    # warn "jack\n";
+    print STDERR  "Before jack connections\n";
     &jack_connections(\@jack);
+    print STDERR  "After jack connections\n";
 }
 if(@pedals){
+    print STDERR  "Before pedals\n";
     foreach my $pedal (@pedals){
 	setup_pedal($pedal);
     }
+    print STDERR  "After pedals\n";
 }
 ##
 
