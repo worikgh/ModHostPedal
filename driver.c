@@ -66,6 +66,9 @@ void clear_jack(){
     /* printf("Port: %s\n", ports[i]); */
     jack_port_disconnect(client, jack_port_by_name(client, ports[i]));
   }
+  if(ports) {
+    jack_free(ports);
+  }
 }
 
 /* Called when a pedal is depressed. The argument defines the pedal */
@@ -101,7 +104,6 @@ int load_pedal(char p){
 
   /* Clear the Jack input and output */
   clear_jack();
-  fprintf(stderr, "Opening script: %s\n", scriptname);
   fd = fopen(scriptname, "r");
   assert(fd);
   i = 0;
