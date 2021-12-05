@@ -27,10 +27,10 @@ int test_bit(unsigned bit, uint8_t *array)
 /*
   Jack stuff
  */
-jack_client_t *client;
+jack_client_t *CLIENT;
 static void signal_handler(int sig)
 {
-  jack_client_close(client);
+  jack_client_close(CLIENT);
   fprintf(stderr, "signal %d received, exiting ...\n", sig);
   exit(0);
 }
@@ -51,24 +51,35 @@ void process_line(char * line){
   assert(src_port);
   dst_port = strtok(NULL, " ");
   assert(dst_port);
-  r = jack_connect(client, src_port, dst_port);
-  fprintf(stderr, "jack_connect(client, %s, %s) -> %d\n", src_port, dst_port, r);
+  r = jack_connect(CLIENT, src_port, dst_port);
   assert(!r || r == EEXIST); 
 }
 
 /* Disconnect jack pipes to stdin and stdout so the pedal can replace
-   them */
-void clear_jack(){
+   them .  Do it after the new peda has been connected
+
+So when new pedal selected grab the system jack connections and put
+them here to discomment after new pedal established
+
+*/
+
+const char ** ports_to_disconnect;
+
+void clear_jack_1(){
+  ports_to_disconnect =  jack_get_ports(CLIENT, "system",
+					"32 bit float mono audio", 0 );
   int i;
-  const char ** ports = jack_get_ports(client, "system",
-				 "32 bit float mono audio", 0 );
-  for(i = 0; ports[i]; i++){
-    /* printf("Port: %s\n", ports[i]); */
-    jack_port_disconnect(client, jack_port_by_name(client, ports[i]));
+  for(i = 0; ports_to_disconnect[i]; i++){
+    fprintf(stderr, "ports_to_disconnect[%d]: %s\n", i, ports_to_disconnect[i]);
+    jack_port_disconnect(CLIENT, jack_port_by_name(CLIENT,
+						   ports_to_disconnect[i]));
   }
-  if(ports) {
-    jack_free(ports);
+  if(ports_to_disconnect) {
+    jack_free(ports_to_disconnect);
   }
+}
+
+void clear_jack_2() {
 }
 
 /* Called when a pedal is depressed. The argument defines the pedal */
@@ -79,7 +90,7 @@ int load_pedal(char p){
 
   const char * path_mi_root;
   char ch;
-  struct timeval a, b;
+  struct timeval a, b, c, d;
   /* We do not want buffer overruns... */
   const uint LINE_MAX = 1024;
   char line[LINE_MAX];
@@ -103,12 +114,13 @@ int load_pedal(char p){
   }
 
   /* Clear the Jack input and output */
-  clear_jack();
+  clear_jack_1();
+  gettimeofday(&b, NULL);
   fd = fopen(scriptname, "r");
   assert(fd);
   i = 0;
-  while((ch = fgetc(fd)) != EOF){  /* while(!feof(fd)){ */
-    assert(i < LINE_MAX);// We really do not want buffer over runs. 
+  while((ch = fgetc(fd)) != EOF && i < LINE_MAX){  /* while(!feof(fd)){ */
+
     line[i] = ch;
     if((ch >= 'a'  && ch <= 'z') ||
        (ch >= 'A'  && ch <= 'Z') ||
@@ -125,10 +137,13 @@ int load_pedal(char p){
       break;
     }
   }
-  gettimeofday(&b, NULL);
-  printf("Took %ld microseconds for %s\n",
-	 ((b.tv_sec - a.tv_sec) * 1000000) +
-	 (b.tv_usec - a.tv_usec), scriptname); 
+  clear_jack_2();
+  gettimeofday(&c, NULL);
+  printf("Clear Jack: %ld\n", ((b.tv_sec - a.tv_sec) * 1000000) +
+	 (b.tv_usec - a.tv_usec));
+  printf("Process script: %ld\n", ((c.tv_sec - b.tv_sec) * 1000000) +
+	 (c.tv_usec - b.tv_usec));
+
   return 0;
 }
 
@@ -154,8 +169,8 @@ int main(int argc, char * argv[]) {
   printf("Driver getting started in %s\n", home_dir);
 
   /* Set up the client for jack */
-  client = jack_client_open ("client_name", JackNullOption, &status);
-  if (client == NULL) {
+  CLIENT = jack_client_open ("client_name", JackNullOption, &status);
+  if (CLIENT == NULL) {
     fprintf (stderr, "jack_client_open() failed, "
 	     "status = 0x%2.0x\n", status);
     if (status & JackServerFailed) {
