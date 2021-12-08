@@ -14,7 +14,7 @@ sudo killall mod-host
 MOD_HOST_EXE='/home/patch/mod-host/bin/mod-host '
 runuser  --preserve-environment -u patch  -- $MOD_HOST_EXE 
 
-$MOD_HOST_PEDAL_DIR/process_modep.pl
+runuser  --preserve-environment -u patch $MOD_HOST_PEDAL_DIR/process_modep.pl
 
 runuser  --preserve-environment -u patch   $MOD_HOST_PEDAL_DIR/driver 2>&1 > /tmp/driver.log & 
 `$LED_FLASH 2 0.5 3 `
