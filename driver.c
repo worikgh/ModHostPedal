@@ -75,12 +75,29 @@ void initialise_pedals(){
 }
 
 void clear_jack_1();
+
+void free_connection(struct jack_connection  * jc){
+  if(jc->ports[0]){
+    free(jc->ports[0]);
+    jc->ports[0] = NULL;
+  }
+  if(jc->ports[1]){
+    free(jc->ports[1]);
+    jc->ports[1] = NULL;
+  }
+}
+
 void _destroy_pedal(struct pedal_config * pc){
   clear_jack_1();
   if(  pc->n_connections > 0) {
     for(unsigned i = 0; i < pc->n_connections; i++){
-      free(pc->connections[i].ports[0]);
-      free(pc->connections[i].ports[1]);
+      free_connection(&pc->connections[i]);
+      /* if(pc->connections[i].ports[0]){ */
+      /* 	free(pc->connections[i].ports[0]); */
+      /* } */
+      /* if(pc->connections[i].ports[1]){ */
+      /* 	free(pc->connections[i].ports[1]); */
+      /* } */
     }
     free(pc->connections);
     pc->connections= NULL;
@@ -93,6 +110,8 @@ void destroy_pedals() {
   _destroy_pedal(&pedals.pedal_configC);  
 }
 
+// Add a jack connection between `jc1` and `jc2` for a pedal defined
+// in `pedal` into the configuration structure
 void add_pedal_effect(char pedal, const char * jc1, const char* jc2){
   struct pedal_config * pc = NULL;
   switch (pedal) {
@@ -141,7 +160,7 @@ void print_connections() {
     if ((connections = jack_port_get_all_connections
 	 (CLIENT, jack_port_by_name(CLIENT, ports[i]))) != 0) {
       for (int j = 0; connections[j]; j++) {
-	printf("CONNECTION\t%s => %s\n", ports[i], connections[j]);
+	fprintf(stderr, "CONNECTION\t%s => %s\n", ports[i], connections[j]);
       }
       jack_free (connections);
     }
@@ -151,12 +170,59 @@ void print_connections() {
   }
 }  
 
-void implement_pedal(char * pedal){
+void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
+  fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__);
+  for (unsigned i = 0; i < pc_in->n_connections; i++){
+    fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__);
+    char * src_port = pc_in->connections[i].ports[0];
+    char * dst_port = pc_in->connections[i].ports[1];
+    fprintf(stderr, "%s:%d clean_cfg i: %d\n",  __FILE__, __LINE__, i);
+    for (unsigned j = 0; j < pc_ret->n_connections; j++){
+      fprintf(stderr, "%s:%d clean_cfg i:%d j:%d\n",  __FILE__, __LINE__, i, j);
+      char * s = pc_ret->connections[j].ports[0];
+      char * d = pc_ret->connections[j].ports[1];
+      fprintf(stderr, "%s:%d clean_cfg s: %s d %s\n",
+	      __FILE__, __LINE__,
+	      s ? s : "NULL",
+	      d ? d : "NULL");
+      if(s && d){
+	if((!strcmp(s, src_port) && !strcmp(d, dst_port)) ||
+	   (!strcmp(d, src_port) && !strcmp(s, dst_port))){
+	  // This connection is in pc_in and pc_ret so remove from
+	  // pc_ret
+	  fprintf(stderr, "%s:%d clean_cfg i %d j %d\n",  __FILE__, __LINE__, i, j);
+	  free_connection(&pc_ret->connections[i]);
+	}
+      }else{
+	fprintf(stderr, "%s:%d ports s: %s d: %s %s/%s\n",
+		__FILE__, __LINE__,
+		s?" OK ":" NULL ",
+		d?" OK ":" NULL ",
+		src_port, dst_port);
+      }
+      /* fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__); */
+    }
+  }
+}
+
+// Make the jack connections (from the system input to effect, from
+// effect to system output) that enables an effect. This is done
+// before the old connections for the pedal being replaced is
+// disconnected/deimplemented so ensure that any connections shared
+// between them are removed from the old configuration.  If the first
+// pedal is being implemented pass NULL for old_pedal
+int connected(const char * port_a, const char * port_b);
+void implement_pedal(char * pedal, char * old_pedal){
+#ifdef VERBOSE
+  fprintf(stderr, "%s:%d implement_pedal %c -> %c\n",
+	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
+#endif
   if ( pedal == NULL ) {
     return;
   }
 
   struct pedal_config * pc;
+  struct pedal_config * opc = NULL;
   switch (*pedal) {
   case 'A':
     pc = &pedals.pedal_configA;
@@ -168,34 +234,77 @@ void implement_pedal(char * pedal){
     pc = &pedals.pedal_configC;
     break;
   default:
+    fprintf(stderr, "%s:%d implement_pedal Unknown: %c\n",
+	    __FILE__, __LINE__, pedal ? *pedal : '!');
     assert(0);
+  }
+
+  if (old_pedal != NULL){
+    switch (*old_pedal) {
+    case 'A':
+      opc = &pedals.pedal_configA;
+      break;
+    case 'B':
+      opc = &pedals.pedal_configB;
+      break;
+    case 'C':
+      opc = &pedals.pedal_configC;
+      break;
+    default:
+      fprintf(stderr, "%s:%d implement_pedal Unknown: %c\n",
+	      __FILE__, __LINE__, old_pedal ? *old_pedal : '!');
+      assert(0);
+    }
+    clean_cfg(pc, opc);
   }
   for (unsigned i = 0; i < pc->n_connections; i++){
     char * src_port = pc->connections[i].ports[0];
     char * dst_port = pc->connections[i].ports[1];
+    int r = 0;
+    if(!connected(src_port, dst_port)){
+      r = jack_connect(CLIENT, src_port, dst_port);
+    }else{
+#ifdef VERBOSE
+      fprintf(stderr, "%s:%d src_port: %s dst_port %s already connected\n",
+	      __FILE__, __LINE__, src_port, dst_port);
+#endif
+    }
 
-    // Encure that neither src_port or dst_port involved in any
-    // connections
-    
-    int r = jack_connect(CLIENT, src_port, dst_port);
     if(r != 0 && r != EEXIST){
-      fprintf(stderr, "FAILURE %d %c %s %s  jack_connect returned %d\n",
-	      __LINE__, *pedal, src_port, dst_port, r);
-      print_connections();
-
-      // Bail out after an error
-      RUNNING = 0;
+      if(!connected(src_port, dst_port)){
+	fprintf(stderr, "%s:%d FAILURE %c %s => %s  jack_connect: %d\n",
+		__FILE__, __LINE__, *pedal, src_port, dst_port, r);
+#ifdef VERBOSE
+	print_connections();
+#endif
+	// Bail out after an error
+	exit(-1);
+      }
     }
   }
+#ifdef VERBOSE
+  fprintf(stderr, "%s:%d END implement_pedal %c -> %c\n",
+	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
+#endif
 }
 
 // Test if these two ports are connected
 int connected(const char * port_a, const char * port_b) {
   jack_port_t * jpt_a = jack_port_by_name(CLIENT, port_a);
+#ifdef VERBOSE
+  jack_port_t * jpt_b  = jack_port_by_name(CLIENT, port_b);
+  int res1 = jack_port_connected_to(jpt_a, port_b);
+  int res2 = jack_port_connected_to(jpt_b, port_a);
+  fprintf(stderr, "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
+	  __FILE__, __LINE__, port_a, port_b, res1, res2);
+#endif
   return jack_port_connected_to(jpt_a, port_b);
 }
 
 void deimplement_pedal(char * pedal){
+#ifdef VERBOSE
+  fprintf(stderr, "%s:%d\n", __FILE__, __LINE__);
+#endif
   if ( pedal == NULL ) {
     return;
   }
@@ -217,28 +326,45 @@ void deimplement_pedal(char * pedal){
   for (unsigned i = 0; i < pc->n_connections; i++){
 
     // The naems of the jack ports to disconnet
-    char * src_port = pc->connections[i].ports[0];
-    char * dst_port = pc->connections[i].ports[1];
+    if(pc->connections[i].ports[0]){
+      // But only if they are existing.  They might have been deleted
+      // if they are in the new configuration
+      char * src_port = pc->connections[i].ports[0];
+      char * dst_port = pc->connections[i].ports[1];
 
-    // Check that the connection exists before disconnecting it.
+      // Check that the connection exists before disconnecting it.
     
-    /* jack_port_t * s = jack_port_by_name(CLIENT, src_port); */
-    /* jack_port_t * d = jack_port_by_name(CLIENT, dst_port); */
-    /* if(!jack_port_connected_to(s, dst_port)){ */
-    /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", src_port, dst_port); */
-    /* }else if(!jack_port_connected_to(d, src_port)){ */
-    /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", dst_port, src_port); */
-    /* }else{ */
-    if(connected(src_port, dst_port)){
-      int r = jack_disconnect(CLIENT, src_port, dst_port);  
-      if(r != 0 && r != EEXIST){
-	fprintf(stderr, "FAILURE %d %c %s %s  jack_disconnect returned %d\n",
-		__LINE__, *pedal, src_port, dst_port, r);
-	print_connections();
-	RUNNING = 0;
+      /* jack_port_t * s = jack_port_by_name(CLIENT, src_port); */
+      /* jack_port_t * d = jack_port_by_name(CLIENT, dst_port); */
+      /* if(!jack_port_connected_to(s, dst_port)){ */
+      /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", src_port, dst_port); */
+      /* }else if(!jack_port_connected_to(d, src_port)){ */
+      /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", dst_port, src_port); */
+      /* }else{ */
+
+      if(connected(src_port, dst_port)){
+	int r = jack_disconnect(CLIENT, src_port, dst_port);  
+	if(r != 0 && r != EEXIST){
+
+	  /*
+	    jack is returning -1 even though it has disconected the
+	    connection.  So double check
+	   */
+	  int bail_out = connected(src_port, dst_port);
+ 	  fprintf(stderr,
+		  "%s:%d: FAILURE  %c %s %s  jack_disconnect returned %d %s\n",
+		  __FILE__, __LINE__, *pedal, src_port, dst_port, r,
+		  bail_out ? " Bailing out" : " Every thing is OK");
+	  if(bail_out) {
+	    exit(-1);
+	  }
+	}
       }
     }
   }
+#ifdef VERBOSE
+  fprintf(stderr, "%s:%d\n", __FILE__, __LINE__);
+#endif
 }
 /* Tests if the `bit`th bit is set in `array.  Used to detect pedaal
    depressions` */
@@ -289,8 +415,8 @@ void process_line(char pedal, char * line){
 /* Disconnect jack pipes to stdin and stdout so the pedal can replace
    them .  Do it after the new peda has been connected
 
-So when new pedal selected grab the system jack connections and put
-them here to discomment after new pedal established
+   So when new pedal selected grab the system jack connections and put
+   them here to discomment after new pedal established
 
 */
 
@@ -376,13 +502,18 @@ void jack_error_cb(const char * msg){
 }
 
 int main(int argc, char * argv[]) {
+
+  // Defined in jack.h(?)
   jack_status_t status;
-  fd_set rfds;
-  struct timeval tv;
-  int retval, res;
+
   unsigned buff_size = 1024;
   char buf[buff_size];
-  unsigned yalv, last_yalv;
+
+  fd_set rfds;
+  struct timeval tv;
+
+  int retval, res;
+  unsigned yalv;//, last_yalv;
   uint8_t key_b[KEY_MAX/8 + 1];
   char * mi_root;
   char home_dir[PATH_MAX + 1];
@@ -426,10 +557,7 @@ int main(int argc, char * argv[]) {
     }
     exit (1);
   }
-  jack_set_error_function(jack_error_cb);
-  //  print_ports();
 
-  /* fprintf(stderr, "Connected to JACK\nOpen /dev/input/event0"); */
   // The keyboard/pedal
   int fd;
   fd = open("/dev/input/event0", O_RDONLY);
@@ -438,7 +566,7 @@ int main(int argc, char * argv[]) {
     return fd;
   }
 
-  last_yalv = 0;
+  unsigned last_yalv = 0;
 
   char * current_pedal = NULL;
   char A = 'A', B = 'B', C = 'C';
@@ -463,7 +591,8 @@ int main(int argc, char * argv[]) {
       if(errno == 4){
 	
 	// Interupted by a signal
-	fprintf(stderr, "signaled: %d\n", signaled);
+	fprintf(stderr, "%s:%d: signaled: %d\n",
+		__FILE__, __LINE__, signaled);
 	if(signaled){
 	  destroy_pedals();
 	  initialise_pedals();
@@ -503,21 +632,22 @@ int main(int argc, char * argv[]) {
 
 	  gettimeofday(&a, NULL);
 
-	  /* fprintf(stderr, "calling deimplement(%c)\n", old_pedal ? *old_pedal : 0); */
-	  deimplement_pedal(old_pedal);
+	  implement_pedal(current_pedal, old_pedal);
 
 	  gettimeofday(&b, NULL);
 
-	  implement_pedal(current_pedal);
+	  deimplement_pedal(old_pedal);
 
 	  gettimeofday(&c, NULL);
 
-	  fprintf(stderr, "Implement %c: %ld\n", *current_pedal, ((c.tv_sec - a.tv_sec) * 1000000) +
-		 (c.tv_usec - a.tv_usec));
-	  /* fprintf(stderr, "Deimplement %c: %ld\n", old_pedal?*old_pedal:'-', ((c.tv_sec - b.tv_sec) * 1000000) + */
-	  /* 	 (c.tv_usec - b.tv_usec)); */
-	  /* printf("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) + */
-	  /* 	 (c.tv_usec - a.tv_usec)); */
+	  fprintf(stderr, "Implement %c: %ld\n", *current_pedal,
+		  ((b.tv_sec - a.tv_sec) * 1000000) +
+		  (c.tv_usec - a.tv_usec));
+	  fprintf(stderr, "Deimplement %c: %ld\n", old_pedal?*old_pedal:'-',
+		  ((c.tv_sec - b.tv_sec) * 1000000) +
+		  (c.tv_usec - b.tv_usec));
+	  printf("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) +
+	  	 (c.tv_usec - a.tv_usec));
 
 	  
 	}
