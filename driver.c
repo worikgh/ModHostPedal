@@ -6,6 +6,7 @@
 #include <jack/jack.h>
 #include <linux/input.h>
 #include <linux/limits.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,6 +21,39 @@ jack_client_t *CLIENT;
 
 // Reset this to exit main loop
 int RUNNING = 1;
+
+// Bare bones logging
+void Log(char * sp, ...){
+
+  const char * log_fn = "/tmp/driver.log";
+  const unsigned MAX_LOG = 2048;
+  char LOGBUFFER[MAX_LOG];
+
+  va_list argptr;
+  va_start(argptr, sp);
+  vsnprintf(LOGBUFFER, MAX_LOG, sp, argptr);
+     //int fd = open(log_fn, O_APPEND|O_CREAT, 0644); //S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH );
+     int fd = open(log_fn,  O_WRONLY | O_CREAT | O_APPEND , 0644);
+  if(fd < 0){
+    fprintf(stderr, "%s:%d: Failed to open %s.  Error: %s\n",
+	    __FILE__, __LINE__, log_fn, strerror(errno));
+    exit(fd);
+  }
+
+
+  int res = dprintf(fd, LOGBUFFER);
+  if(res != strlen(LOGBUFFER)){
+    fprintf(stderr, "%s:%d: Failed to write log %s d: %d fd: %d Message: %s\n",
+	    __FILE__, __LINE__, strerror(errno), res, fd, LOGBUFFER);
+    exit(-1);
+  }
+
+  if(close(fd)){
+    fprintf(stderr, "%s:%d: Failed to close log  %s\n",
+	    __FILE__, __LINE__, strerror(errno));
+    exit(-1);
+  }
+}
 
 struct jack_connection {
   char * ports[2];
@@ -55,12 +89,12 @@ void print_pedal(char pedal){
   default:
     assert(0);
   }
-  fprintf(stderr, "Pedal %c:\n\t", pedal);
+  Log( "Pedal %c:\n\t", pedal);
   for(unsigned i = 0; i < pc->n_connections; i++){
     struct jack_connection * jcp = &pc->connections[i];
-    fprintf(stderr, ">A> %s -> %s\n\t", jcp->ports[0], jcp->ports[1]);
+    Log( ">A> %s -> %s\n\t", jcp->ports[0], jcp->ports[1]);
   }
-  fprintf(stderr, "\n");
+  Log( "\n");
 }
 void initialise_pedals(){
   pedals.pedal_configA.n_connections = 0;
@@ -160,7 +194,7 @@ void print_connections() {
     if ((connections = jack_port_get_all_connections
 	 (CLIENT, jack_port_by_name(CLIENT, ports[i]))) != 0) {
       for (int j = 0; connections[j]; j++) {
-	fprintf(stderr, "CONNECTION\t%s => %s\n", ports[i], connections[j]);
+	Log( "CONNECTION\t%s => %s\n", ports[i], connections[j]);
       }
       jack_free (connections);
     }
@@ -171,36 +205,27 @@ void print_connections() {
 }  
 
 void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
-  fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__);
   for (unsigned i = 0; i < pc_in->n_connections; i++){
-    fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__);
     char * src_port = pc_in->connections[i].ports[0];
     char * dst_port = pc_in->connections[i].ports[1];
-    fprintf(stderr, "%s:%d clean_cfg i: %d\n",  __FILE__, __LINE__, i);
     for (unsigned j = 0; j < pc_ret->n_connections; j++){
-      fprintf(stderr, "%s:%d clean_cfg i:%d j:%d\n",  __FILE__, __LINE__, i, j);
       char * s = pc_ret->connections[j].ports[0];
       char * d = pc_ret->connections[j].ports[1];
-      fprintf(stderr, "%s:%d clean_cfg s: %s d %s\n",
-	      __FILE__, __LINE__,
-	      s ? s : "NULL",
-	      d ? d : "NULL");
+
       if(s && d){
 	if((!strcmp(s, src_port) && !strcmp(d, dst_port)) ||
 	   (!strcmp(d, src_port) && !strcmp(s, dst_port))){
 	  // This connection is in pc_in and pc_ret so remove from
 	  // pc_ret
-	  fprintf(stderr, "%s:%d clean_cfg i %d j %d\n",  __FILE__, __LINE__, i, j);
 	  free_connection(&pc_ret->connections[i]);
 	}
       }else{
-	fprintf(stderr, "%s:%d ports s: %s d: %s %s/%s\n",
+	Log( "%s:%d ports s: %s d: %s %s/%s\n",
 		__FILE__, __LINE__,
 		s?" OK ":" NULL ",
 		d?" OK ":" NULL ",
 		src_port, dst_port);
       }
-      /* fprintf(stderr, "%s:%d clean_cfg\n",  __FILE__, __LINE__); */
     }
   }
 }
@@ -214,7 +239,7 @@ void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
 int connected(const char * port_a, const char * port_b);
 void implement_pedal(char * pedal, char * old_pedal){
 #ifdef VERBOSE
-  fprintf(stderr, "%s:%d implement_pedal %c -> %c\n",
+  Log( "%s:%d implement_pedal %c -> %c\n",
 	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
 #endif
   if ( pedal == NULL ) {
@@ -234,7 +259,7 @@ void implement_pedal(char * pedal, char * old_pedal){
     pc = &pedals.pedal_configC;
     break;
   default:
-    fprintf(stderr, "%s:%d implement_pedal Unknown: %c\n",
+    Log( "%s:%d implement_pedal Unknown: %c\n",
 	    __FILE__, __LINE__, pedal ? *pedal : '!');
     assert(0);
   }
@@ -251,7 +276,7 @@ void implement_pedal(char * pedal, char * old_pedal){
       opc = &pedals.pedal_configC;
       break;
     default:
-      fprintf(stderr, "%s:%d implement_pedal Unknown: %c\n",
+      Log( "%s:%d implement_pedal Unknown: %c\n",
 	      __FILE__, __LINE__, old_pedal ? *old_pedal : '!');
       assert(0);
     }
@@ -265,14 +290,14 @@ void implement_pedal(char * pedal, char * old_pedal){
       r = jack_connect(CLIENT, src_port, dst_port);
     }else{
 #ifdef VERBOSE
-      fprintf(stderr, "%s:%d src_port: %s dst_port %s already connected\n",
+      Log( "%s:%d src_port: %s dst_port %s already connected\n",
 	      __FILE__, __LINE__, src_port, dst_port);
 #endif
     }
 
     if(r != 0 && r != EEXIST){
       if(!connected(src_port, dst_port)){
-	fprintf(stderr, "%s:%d FAILURE %c %s => %s  jack_connect: %d\n",
+	Log( "%s:%d FAILURE %c %s => %s  jack_connect: %d\n",
 		__FILE__, __LINE__, *pedal, src_port, dst_port, r);
 #ifdef VERBOSE
 	print_connections();
@@ -283,7 +308,7 @@ void implement_pedal(char * pedal, char * old_pedal){
     }
   }
 #ifdef VERBOSE
-  fprintf(stderr, "%s:%d END implement_pedal %c -> %c\n",
+  Log( "%s:%d END implement_pedal %c -> %c\n",
 	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
 #endif
 }
@@ -295,7 +320,7 @@ int connected(const char * port_a, const char * port_b) {
   jack_port_t * jpt_b  = jack_port_by_name(CLIENT, port_b);
   int res1 = jack_port_connected_to(jpt_a, port_b);
   int res2 = jack_port_connected_to(jpt_b, port_a);
-  fprintf(stderr, "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
+  Log( "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
 	  __FILE__, __LINE__, port_a, port_b, res1, res2);
 #endif
   return jack_port_connected_to(jpt_a, port_b);
@@ -303,7 +328,7 @@ int connected(const char * port_a, const char * port_b) {
 
 void deimplement_pedal(char * pedal){
 #ifdef VERBOSE
-  fprintf(stderr, "%s:%d\n", __FILE__, __LINE__);
+  Log( "%s:%d\n", __FILE__, __LINE__);
 #endif
   if ( pedal == NULL ) {
     return;
@@ -337,9 +362,9 @@ void deimplement_pedal(char * pedal){
       /* jack_port_t * s = jack_port_by_name(CLIENT, src_port); */
       /* jack_port_t * d = jack_port_by_name(CLIENT, dst_port); */
       /* if(!jack_port_connected_to(s, dst_port)){ */
-      /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", src_port, dst_port); */
+      /*   Log( "WON'T disconnect %s -> %s\n", src_port, dst_port); */
       /* }else if(!jack_port_connected_to(d, src_port)){ */
-      /*   fprintf(stderr, "WON'T disconnect %s -> %s\n", dst_port, src_port); */
+      /*   Log( "WON'T disconnect %s -> %s\n", dst_port, src_port); */
       /* }else{ */
 
       if(connected(src_port, dst_port)){
@@ -351,10 +376,9 @@ void deimplement_pedal(char * pedal){
 	    connection.  So double check
 	   */
 	  int bail_out = connected(src_port, dst_port);
- 	  fprintf(stderr,
-		  "%s:%d: FAILURE  %c %s %s  jack_disconnect returned %d %s\n",
-		  __FILE__, __LINE__, *pedal, src_port, dst_port, r,
-		  bail_out ? " Bailing out" : " Every thing is OK");
+ 	  Log("%s:%d: FAILURE  %c %s %s  jack_disconnect returned %d %s\n",
+	      __FILE__, __LINE__, *pedal, src_port, dst_port, r,
+	      bail_out ? " Bailing out" : " Every thing is OK");
 	  if(bail_out) {
 	    exit(-1);
 	  }
@@ -363,7 +387,7 @@ void deimplement_pedal(char * pedal){
     }
   }
 #ifdef VERBOSE
-  fprintf(stderr, "%s:%d\n", __FILE__, __LINE__);
+  Log( "%s:%d\n", __FILE__, __LINE__);
 #endif
 }
 /* Tests if the `bit`th bit is set in `array.  Used to detect pedaal
@@ -427,7 +451,7 @@ void clear_jack_1(){
 					"32 bit float mono audio", 0 );
   int i;
   for(i = 0; ports_to_disconnect[i]; i++){
-    /* fprintf(stderr, "ports_to_disconnect[%d]: %s\n", i, ports_to_disconnect[i]); */
+    /* Log( "ports_to_disconnect[%d]: %s\n", i, ports_to_disconnect[i]); */
     jack_port_disconnect(CLIENT, jack_port_by_name(CLIENT,
 						   ports_to_disconnect[i]));
   }
@@ -468,7 +492,7 @@ int load_pedal(char p){
   }
   sprintf(scriptname, "%s/PEDALS/%c", path_mi_root, pedal);
 
-  fprintf(stderr, "Opening script: %s\n", scriptname);
+  Log( "Opening script: %s\n", scriptname);
   fd = fopen(scriptname, "r");
   assert(fd);
   i = 0;
@@ -498,7 +522,7 @@ int load_pedal(char p){
 }
 
 void jack_error_cb(const char * msg){
-  fprintf(stderr, "JACK ERROR: %s\n", msg);
+  Log( "JACK ERROR: %s\n", msg);
 }
 
 int main(int argc, char * argv[]) {
@@ -541,7 +565,7 @@ int main(int argc, char * argv[]) {
   assert(fd_pid);
   
   int pid_res = fprintf(fd_pid, "%d", pid);
-  fprintf(stderr, "%s\n", strerror(errno));
+  Log( "%s\n", strerror(errno));
   assert(pid_res > 0);
   fclose(fd_pid);
   
@@ -572,7 +596,7 @@ int main(int argc, char * argv[]) {
   char A = 'A', B = 'B', C = 'C';
 
   /* int loop_limit = 0; */
-
+  Log("Starting main loop\n");
   while(RUNNING == 1){
     /* if(loop_limit++ > 120){ */
     /*   RUNNING = 0; */
@@ -591,7 +615,7 @@ int main(int argc, char * argv[]) {
       if(errno == 4){
 	
 	// Interupted by a signal
-	fprintf(stderr, "%s:%d: signaled: %d\n",
+	Log( "%s:%d: signaled: %d\n",
 		__FILE__, __LINE__, signaled);
 	if(signaled){
 	  destroy_pedals();
@@ -605,13 +629,13 @@ int main(int argc, char * argv[]) {
       printf("Heartbeat...\n");
       continue;
     }
-    /* fprintf(stderr, "Before IOCTL\n"); */
+    /* Log( "Before IOCTL\n"); */
     memset(key_b, 0, sizeof(key_b));
     if(ioctl(fd, EVIOCGKEY(sizeof(key_b)), key_b) == -1){
       printf("IOCTL Error %s\n", strerror(errno));
       return -1;
     }
-    /* fprintf(stderr, "IOCTL returnes\n"); */
+    /* Log( "IOCTL returnes\n"); */
     
     for (yalv = 0; yalv < KEY_MAX; yalv++) {
       if (test_bit(yalv, key_b)) {
@@ -640,16 +664,16 @@ int main(int argc, char * argv[]) {
 
 	  gettimeofday(&c, NULL);
 
-	  fprintf(stderr, "Implement %c: %ld\n", *current_pedal,
-		  ((b.tv_sec - a.tv_sec) * 1000000) +
-		  (c.tv_usec - a.tv_usec));
-	  fprintf(stderr, "Deimplement %c: %ld\n", old_pedal?*old_pedal:'-',
-		  ((c.tv_sec - b.tv_sec) * 1000000) +
-		  (c.tv_usec - b.tv_usec));
-	  printf("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) +
-	  	 (c.tv_usec - a.tv_usec));
+	  Log("Implement %c: %ld\n", *current_pedal,
+	      ((b.tv_sec - a.tv_sec) * 1000000) +
+	      (b.tv_usec - a.tv_usec));
 
 	  
+	  Log( "Deimplement %c: %ld\n", old_pedal?*old_pedal:'-',
+		  ((c.tv_sec - b.tv_sec) * 1000000) +
+		  (c.tv_usec - b.tv_usec));
+	  Log("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) +
+	  	 (c.tv_usec - a.tv_usec));
 	}
       }
     }
@@ -664,6 +688,6 @@ int main(int argc, char * argv[]) {
     }      
     /* printf("That was a pedal\n"); */
   }
-  fprintf(stderr, "After main loop.  RUNNING: %d\n", RUNNING);
+  Log( "After main loop.  RUNNING: %d\n", RUNNING);
   return 0;
 }
