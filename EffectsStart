@@ -12,11 +12,12 @@ service modep-mod-host stop
 sudo killall mod-host
 
 MOD_HOST_EXE='/home/patch/mod-host/bin/mod-host '
+rm -f /tmp/mod-host.pid
 runuser  --preserve-environment -u patch  -- $MOD_HOST_EXE 
 
 runuser  --preserve-environment -u patch $MOD_HOST_PEDAL_DIR/process_modep.pl
 
-runuser  --preserve-environment -u patch   $MOD_HOST_PEDAL_DIR/driver 2>&1 > /tmp/driver.log & 
+runuser  --preserve-environment -u patch   $MOD_HOST_PEDAL_DIR/driver & 
 `$LED_FLASH 2 0.5 3 `
 
 
