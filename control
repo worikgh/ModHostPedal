@@ -349,7 +349,7 @@ sub mod_host( $ ){
 		# }
 	    }else{
 		$failed = 0;
-		print STDERR "Got effect_$1\n";
+		# print STDERR "Got effect_$1\n";
 	    }
 	}
     }
