@@ -7,10 +7,12 @@ export LV2_PATH=/usr/modep/lv2
 # ## Flash the LED.  Arguments: Duration Frequency Count
 LED_FLASH=$MOD_HOST_PEDAL_DIR/led_flash
 
-`$LED_FLASH 2 .1 2`
+`$LED_FLASH 1 .3 1`
 
 sudo killall mod-host
+`$LED_FLASH 1 .4 1`
 service modep-mod-host start
+`$LED_FLASH 1 .5 1`
 service modep-mod-ui start
+`$LED_FLASH 1 .6 4`
 
-`$LED_FLASH 2 .1 4`
