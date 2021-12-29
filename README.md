@@ -18,11 +18,11 @@ The USB foot pedal is essentially a USB keyboard with only a few keys.
 
 * Clone this repository into `/home/patch`
 
-* Compile driver: `make zip` in `/home/patch`
+* Compile driver: `make zip` in `/home/patch/ModHostPedal`
 
 * Set up some pedals (see `Configuring the Pedal` below)
 
-* Run `./EffectsStart`  in `/home/patch`
+* Run `./EffectsStart`  in `/home/patch/ModHostPedal`
 
 # Setup
 
