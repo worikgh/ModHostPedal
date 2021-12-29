@@ -9,10 +9,9 @@ rm $PEDALS_DIR/B
 rm $PEDALS_DIR/C
 
 runuser -u patch -- ln -s $PEDALS_DIR/RVB $PEDALS_DIR/A
-runuser -u patch -- ln -s $PEDALS_DIR/WC $PEDALS_DIR/B
-runuser -u patch -- ln -s $PEDALS_DIR/CAPS $PEDALS_DIR/C
+runuser -u patch -- ln -s $PEDALS_DIR/Chorus $PEDALS_DIR/B
+runuser -u patch -- ln -s $PEDALS_DIR/Coubler $PEDALS_DIR/C
 
-kill -HUP `cat $MOD_HOST_PEDAL_DIR/.driver.pid`
 
 $LED_FLASH 1 0.35 4
 sleep 1
