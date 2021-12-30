@@ -1,5 +1,9 @@
 /* https://www.linuxjournal.com/article/6429?page=0,1 */
-
+/*
+ Userspace driver for a simple three key USB keyboard.  Hard coded to
+ three keys 'A', 'B', 'C'.  When a key is pressed an LV2 effect chain
+ is enabled, and an old one disabled
+ */
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -22,38 +26,17 @@ jack_client_t *CLIENT;
 // Reset this to exit main loop
 int RUNNING = 1;
 
-// Bare bones logging
-void Log(char * sp, ...){
-
-  const char * log_fn = "/tmp/driver.log";
-  const unsigned MAX_LOG = 2048;
-  char LOGBUFFER[MAX_LOG];
-
-  va_list argptr;
-  va_start(argptr, sp);
-  vsnprintf(LOGBUFFER, MAX_LOG, sp, argptr);
-     //int fd = open(log_fn, O_APPEND|O_CREAT, 0644); //S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH );
-     int fd = open(log_fn,  O_WRONLY | O_CREAT | O_APPEND , 0644);
-  if(fd < 0){
-    fprintf(stderr, "%s:%d: Failed to open %s.  Error: %s\n",
-	    __FILE__, __LINE__, log_fn, strerror(errno));
-    exit(fd);
-  }
-
-
-  int res = dprintf(fd, LOGBUFFER);
-  if(res != strlen(LOGBUFFER)){
-    fprintf(stderr, "%s:%d: Failed to write log %s d: %d fd: %d Message: %s\n",
-	    __FILE__, __LINE__, strerror(errno), res, fd, LOGBUFFER);
-    exit(-1);
-  }
-
-  if(close(fd)){
-    fprintf(stderr, "%s:%d: Failed to close log  %s\n",
-	    __FILE__, __LINE__, strerror(errno));
-    exit(-1);
-  }
-}
+void Log(char * sp, ...);
+int load_pedal(char);
+void print_pedal(char pedal);
+void clear_jack();
+void initialise_pedals();
+void destroy_pedals();
+struct jack_connection;
+int connected(const char * port_a, const char * port_b);
+void free_connection(struct jack_connection  * jc);
+void print_connections();
+void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret);
 
 struct jack_connection {
   char * ports[2];
@@ -63,180 +46,25 @@ struct pedal_config {
   unsigned n_connections;
 };
 
-
 struct Pedals {
   struct pedal_config pedal_configA;
   struct pedal_config pedal_configB;
   struct pedal_config pedal_configC;
 };
-
 struct Pedals pedals;
 
-int load_pedal(char);
 
-void print_pedal(char pedal){
-  struct pedal_config * pc;
-  switch (pedal) {
-  case 'A':
-    pc = &pedals.pedal_configA;
-    break;
-  case 'B':
-    pc = &pedals.pedal_configB;
-    break;
-  case 'C':
-    pc = &pedals.pedal_configC;
-    break;
-  default:
-    assert(0);
-  }
-  Log( "Pedal %c:\n\t", pedal);
-  for(unsigned i = 0; i < pc->n_connections; i++){
-    struct jack_connection * jcp = &pc->connections[i];
-    Log( ">A> %s -> %s\n\t", jcp->ports[0], jcp->ports[1]);
-  }
-  Log( "\n");
-}
-void initialise_pedals(){
-  pedals.pedal_configA.n_connections = 0;
-  pedals.pedal_configA.connections = NULL;
-  pedals.pedal_configB.n_connections = 0;
-  pedals.pedal_configB.connections = NULL;
-  pedals.pedal_configC.n_connections = 0;
-  pedals.pedal_configC.connections = NULL;
-  load_pedal('A');
-  load_pedal('B');
-  load_pedal('C');
-}
 
-void clear_jack_1();
 
-void free_connection(struct jack_connection  * jc){
-  if(jc->ports[0]){
-    free(jc->ports[0]);
-    jc->ports[0] = NULL;
-  }
-  if(jc->ports[1]){
-    free(jc->ports[1]);
-    jc->ports[1] = NULL;
-  }
-}
+/*
+   Make the jack connections (from the system input to effect, from
+   effect to system output) that enables an effect. This is done
+   before the old connections for the pedal being replaced is
+   disconnected/deimplemented so ensure that any connections shared
+   between them are removed from the old configuration.
 
-void _destroy_pedal(struct pedal_config * pc){
-  clear_jack_1();
-  if(  pc->n_connections > 0) {
-    for(unsigned i = 0; i < pc->n_connections; i++){
-      free_connection(&pc->connections[i]);
-      /* if(pc->connections[i].ports[0]){ */
-      /* 	free(pc->connections[i].ports[0]); */
-      /* } */
-      /* if(pc->connections[i].ports[1]){ */
-      /* 	free(pc->connections[i].ports[1]); */
-      /* } */
-    }
-    free(pc->connections);
-    pc->connections= NULL;
-    pc->n_connections = 0;
-  }
-}
-void destroy_pedals() {
-  _destroy_pedal(&pedals.pedal_configA);
-  _destroy_pedal(&pedals.pedal_configB);
-  _destroy_pedal(&pedals.pedal_configC);  
-}
-
-// Add a jack connection between `jc1` and `jc2` for a pedal defined
-// in `pedal` into the configuration structure
-void add_pedal_effect(char pedal, const char * jc1, const char* jc2){
-  struct pedal_config * pc = NULL;
-  switch (pedal) {
-  case 'A': 
-    pc = & pedals.pedal_configA;
-    break;
-  case 'B':
-    pc = & pedals.pedal_configB;
-    break;
-  case 'C':
-    pc = & pedals.pedal_configC;
-    break;
-  }
-
-  assert(pc != NULL);
-
-  pc->n_connections++;
-  pc->connections =
-    realloc(pc->connections,
-	    pc->n_connections * (sizeof (struct jack_connection)));
-  assert(pc->connections);
-  unsigned jc1_len = strlen(jc1)+1;
-  unsigned jc2_len = strlen(jc2)+1;
-
-  // Sanity check
-  unsigned MAX_COMMAND = 1024;
-  assert(jc1_len < MAX_COMMAND);
-  assert(jc2_len < MAX_COMMAND);
-
-  pc->connections[pc->n_connections - 1].ports[0] =
-    malloc(sizeof (char)  * jc1_len);
-
-  pc->connections[pc->n_connections - 1].ports[1] =
-    malloc(sizeof (char)  * jc2_len);
-  
-  strncpy(pc->connections[pc->n_connections - 1].ports[0], jc1, jc1_len);
-  strncpy(pc->connections[pc->n_connections - 1].ports[1], jc2, jc2_len);
-
-}
-
-void print_connections() {
-  const char **ports, **connections;
-  ports = jack_get_ports (CLIENT, NULL, NULL, 0);
-  for (int i = 0; ports && ports[i]; ++i) {
-    /* jack_port_t *port = jack_port_by_name (CLIENT, ports[i]); */
-    if ((connections = jack_port_get_all_connections
-	 (CLIENT, jack_port_by_name(CLIENT, ports[i]))) != 0) {
-      for (int j = 0; connections[j]; j++) {
-	Log( "CONNECTION\t%s => %s\n", ports[i], connections[j]);
-      }
-      jack_free (connections);
-    }
-  }
-  if(ports){
-    jack_free(ports);
-  }
-}  
-
-void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
-  for (unsigned i = 0; i < pc_in->n_connections; i++){
-    char * src_port = pc_in->connections[i].ports[0];
-    char * dst_port = pc_in->connections[i].ports[1];
-    for (unsigned j = 0; j < pc_ret->n_connections; j++){
-      char * s = pc_ret->connections[j].ports[0];
-      char * d = pc_ret->connections[j].ports[1];
-
-      if(s && d){
-	if((!strcmp(s, src_port) && !strcmp(d, dst_port)) ||
-	   (!strcmp(d, src_port) && !strcmp(s, dst_port))){
-	  // This connection is in pc_in and pc_ret so remove from
-	  // pc_ret
-	  free_connection(&pc_ret->connections[i]);
-	}
-      }else{
-	Log( "%s:%d ports s: %s d: %s %s/%s\n",
-		__FILE__, __LINE__,
-		s?" OK ":" NULL ",
-		d?" OK ":" NULL ",
-		src_port, dst_port);
-      }
-    }
-  }
-}
-
-// Make the jack connections (from the system input to effect, from
-// effect to system output) that enables an effect. This is done
-// before the old connections for the pedal being replaced is
-// disconnected/deimplemented so ensure that any connections shared
-// between them are removed from the old configuration.  If the first
-// pedal is being implemented pass NULL for old_pedal
-int connected(const char * port_a, const char * port_b);
+   If the first pedal is being implemented pass NULL for old_pedal
+*/
 void implement_pedal(char * pedal, char * old_pedal){
 #ifdef VERBOSE
   Log( "%s:%d implement_pedal %c -> %c\n",
@@ -246,6 +74,7 @@ void implement_pedal(char * pedal, char * old_pedal){
     return;
   }
 
+  
   struct pedal_config * pc;
   struct pedal_config * opc = NULL;
   switch (*pedal) {
@@ -300,7 +129,7 @@ void implement_pedal(char * pedal, char * old_pedal){
 	Log( "%s:%d FAILURE %c %s => %s  jack_connect: %d\n",
 		__FILE__, __LINE__, *pedal, src_port, dst_port, r);
 #ifdef VERBOSE
-	print_connections();
+	 print_connections();
 #endif
 	// Bail out after an error
 	exit(-1);
@@ -423,9 +252,53 @@ void jack_shutdown (void *arg)
   exit (1);
 }
 
-/* Pedals are defined by jack plumbing.  Each line in a pedal file is
-   the destination (src/sink) of a jack pipe.  This sets up those
-   pipes */
+// Add a jack connection between `jc1` and `jc2` for a pedal defined
+// in `pedal` into the configuration structure
+void add_pedal_effect(char pedal, const char * jc1, const char* jc2){
+  struct pedal_config * pc = NULL;
+  switch (pedal) {
+  case 'A': 
+    pc = & pedals.pedal_configA;
+    break;
+  case 'B':
+    pc = & pedals.pedal_configB;
+    break;
+  case 'C':
+    pc = & pedals.pedal_configC;
+    break;
+  }
+
+  assert(pc != NULL);
+
+  pc->n_connections++;
+  pc->connections =
+    realloc(pc->connections,
+	    pc->n_connections * (sizeof (struct jack_connection)));
+  assert(pc->connections);
+  unsigned jc1_len = strlen(jc1)+1;
+  unsigned jc2_len = strlen(jc2)+1;
+
+  // Sanity check
+  unsigned MAX_COMMAND = 1024;
+  assert(jc1_len < MAX_COMMAND);
+  assert(jc2_len < MAX_COMMAND);
+
+  pc->connections[pc->n_connections - 1].ports[0] =
+    malloc(sizeof (char)  * jc1_len);
+
+  pc->connections[pc->n_connections - 1].ports[1] =
+    malloc(sizeof (char)  * jc2_len);
+  
+  strncpy(pc->connections[pc->n_connections - 1].ports[0], jc1, jc1_len);
+  strncpy(pc->connections[pc->n_connections - 1].ports[1], jc2, jc2_len);
+
+}
+
+/* Called on setup and when signaled to set up pedal effects, this is
+   one line in the configuration file. Pedals are defined by jack
+   plumbing.  Each line in a pedal file is the destination (src/sink)
+   of a jack pipe.  This sets up those pipes 
+*/
 void process_line(char pedal, char * line){
   const char * src_port, * dst_port;
   char * tok = strtok(line, " ");
@@ -443,10 +316,8 @@ void process_line(char pedal, char * line){
    them here to discomment after new pedal established
 
 */
-
-
 const char ** ports_to_disconnect;
-void clear_jack_1(){
+void clear_jack(){
   ports_to_disconnect =  jack_get_ports(CLIENT, "system",
 					"32 bit float mono audio", 0 );
   int i;
@@ -460,10 +331,10 @@ void clear_jack_1(){
   }
 }
 
-void clear_jack_2() {
-}
-
-/* Called when a pedal is depressed. The argument defines the pedal */
+/* Called on setup and when signaled to set up pedal effects.  Reads
+ * the description of what this pedal (passed in `p`) does from
+ * PEDALS/${p}
+ */
 int load_pedal(char p){
   int i;
   FILE * fd;
@@ -690,4 +561,159 @@ int main(int argc, char * argv[]) {
   }
   Log( "After main loop.  RUNNING: %d\n", RUNNING);
   return 0;
+}
+
+
+//+===========+++++========++++++=================
+// useful but borring functions
+//
+
+void Log(char * sp, ...){
+
+  const char * log_fn = "/tmp/driver.log";
+  const unsigned MAX_LOG = 2048;
+  char LOGBUFFER[MAX_LOG];
+
+  va_list argptr;
+  va_start(argptr, sp);
+  vsnprintf(LOGBUFFER, MAX_LOG, sp, argptr);
+     //int fd = open(log_fn, O_APPEND|O_CREAT, 0644); //S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH );
+     int fd = open(log_fn,  O_WRONLY | O_CREAT | O_APPEND , 0644);
+  if(fd < 0){
+    fprintf(stderr, "%s:%d: Failed to open %s.  Error: %s\n",
+	    __FILE__, __LINE__, log_fn, strerror(errno));
+    exit(fd);
+  }
+
+
+  int res = dprintf(fd, LOGBUFFER);
+  if(res != strlen(LOGBUFFER)){
+    fprintf(stderr, "%s:%d: Failed to write log %s d: %d fd: %d Message: %s\n",
+	    __FILE__, __LINE__, strerror(errno), res, fd, LOGBUFFER);
+    exit(-1);
+  }
+
+  if(close(fd)){
+    fprintf(stderr, "%s:%d: Failed to close log  %s\n",
+	    __FILE__, __LINE__, strerror(errno));
+    exit(-1);
+  }
+}
+
+void print_connections() {
+  const char **ports, **connections;
+  ports = jack_get_ports (CLIENT, NULL, NULL, 0);
+  for (int i = 0; ports && ports[i]; ++i) {
+    /* jack_port_t *port = jack_port_by_name (CLIENT, ports[i]); */
+    if ((connections = jack_port_get_all_connections
+	 (CLIENT, jack_port_by_name(CLIENT, ports[i]))) != 0) {
+      for (int j = 0; connections[j]; j++) {
+	Log( "CONNECTION\t%s => %s\n", ports[i], connections[j]);
+      }
+      jack_free (connections);
+    }
+  }
+  if(ports){
+    jack_free(ports);
+  }
+}  
+
+void print_pedal(char pedal){
+  struct pedal_config * pc;
+  switch (pedal) {
+  case 'A':
+    pc = &pedals.pedal_configA;
+    break;
+  case 'B':
+    pc = &pedals.pedal_configB;
+    break;
+  case 'C':
+    pc = &pedals.pedal_configC;
+    break;
+  default:
+    assert(0);
+  }
+  Log( "Pedal %c:\n\t", pedal);
+  for(unsigned i = 0; i < pc->n_connections; i++){
+    struct jack_connection * jcp = &pc->connections[i];
+    Log( ">A> %s -> %s\n\t", jcp->ports[0], jcp->ports[1]);
+  }
+  Log( "\n");
+}
+
+
+// Called on set up and when signaled to set up the pedals.  Define
+// what they do
+void initialise_pedals(){
+  pedals.pedal_configA.n_connections = 0;
+  pedals.pedal_configA.connections = NULL;
+  pedals.pedal_configB.n_connections = 0;
+  pedals.pedal_configB.connections = NULL;
+  pedals.pedal_configC.n_connections = 0;
+  pedals.pedal_configC.connections = NULL;
+  load_pedal('A');
+  load_pedal('B');
+  load_pedal('C');
+}
+
+
+void _destroy_pedal(struct pedal_config * pc){
+  clear_jack();
+  if(  pc->n_connections > 0) {
+    for(unsigned i = 0; i < pc->n_connections; i++){
+      free_connection(&pc->connections[i]);
+      /* if(pc->connections[i].ports[0]){ */
+      /* 	free(pc->connections[i].ports[0]); */
+      /* } */
+      /* if(pc->connections[i].ports[1]){ */
+      /* 	free(pc->connections[i].ports[1]); */
+      /* } */
+    }
+    free(pc->connections);
+    pc->connections= NULL;
+    pc->n_connections = 0;
+  }
+}
+
+void destroy_pedals() {
+  _destroy_pedal(&pedals.pedal_configA);
+  _destroy_pedal(&pedals.pedal_configB);
+  _destroy_pedal(&pedals.pedal_configC);  
+}
+
+void free_connection(struct jack_connection  * jc){
+  if(jc->ports[0]){
+    free(jc->ports[0]);
+    jc->ports[0] = NULL;
+  }
+  if(jc->ports[1]){
+    free(jc->ports[1]);
+    jc->ports[1] = NULL;
+  }
+}
+
+void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
+  for (unsigned i = 0; i < pc_in->n_connections; i++){
+    char * src_port = pc_in->connections[i].ports[0];
+    char * dst_port = pc_in->connections[i].ports[1];
+    for (unsigned j = 0; j < pc_ret->n_connections; j++){
+      char * s = pc_ret->connections[j].ports[0];
+      char * d = pc_ret->connections[j].ports[1];
+
+      if(s && d){
+	if((!strcmp(s, src_port) && !strcmp(d, dst_port)) ||
+	   (!strcmp(d, src_port) && !strcmp(s, dst_port))){
+	  // This connection is in pc_in and pc_ret so remove from
+	  // pc_ret
+	  free_connection(&pc_ret->connections[i]);
+	}
+      }else{
+	Log( "%s:%d ports s: %s d: %s %s/%s\n",
+		__FILE__, __LINE__,
+		s?" OK ":" NULL ",
+		d?" OK ":" NULL ",
+		src_port, dst_port);
+      }
+    }
+  }
 }
