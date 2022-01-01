@@ -98,7 +98,10 @@ fn create_websocket(orders: &impl Orders<Msg>) -> WebSocket {
 /// function is.  The function is called with
 /// `Option<Msg>::BinaryMessageReceived` or
 /// `Option<Msg>::TestMessageReceived`.  Why????
-fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>) {
+fn decode_message(
+    message: WebSocketMessage,
+    msg_sender: Rc<dyn Fn(Option<Msg>)>,
+) {
     if message.contains_text() {
         let msg = message
             .json::<shared::ServerMessage>()
@@ -112,7 +115,8 @@ fn decode_message(message: WebSocketMessage, msg_sender: Rc<dyn Fn(Option<Msg>)>
                 .await
                 .expect("WebsocketError on binary data");
 
-            let msg: shared::ServerMessage = rmp_serde::from_slice(&bytes).unwrap();
+            let msg: shared::ServerMessage =
+                rmp_serde::from_slice(&bytes).unwrap();
             msg_sender(Some(Msg::BinaryMessageReceived(msg)));
         });
     }
@@ -330,19 +334,21 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
             log!(my_now(), "==================");
 
             // Chrome doesn't invoke `on_error` when the connection is lost.
-            if !close_event.was_clean() && model.web_socket_reconnector.is_none() {
-                model.web_socket_reconnector = Some(
-                    orders.stream_with_handle(streams::backoff(None, Msg::ReconnectWebSocket)),
-                );
+            if !close_event.was_clean()
+                && model.web_socket_reconnector.is_none()
+            {
+                model.web_socket_reconnector = Some(orders.stream_with_handle(
+                    streams::backoff(None, Msg::ReconnectWebSocket),
+                ));
             }
         }
 
         Msg::WebSocketFailed => {
             log!(my_now(), "WebSocket failed");
             if model.web_socket_reconnector.is_none() {
-                model.web_socket_reconnector = Some(
-                    orders.stream_with_handle(streams::backoff(None, Msg::ReconnectWebSocket)),
-                );
+                model.web_socket_reconnector = Some(orders.stream_with_handle(
+                    streams::backoff(None, Msg::ReconnectWebSocket),
+                ));
             }
         }
 
