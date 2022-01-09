@@ -58,9 +58,8 @@ struct ServerState {
     selected_pedal_board: String,
 
     // Map pedal board name to the list of pedals (created by Modep
-    // and organised by `preocess_modep.pl`).  The list of boards is a
-    // space delimited ready for `setpedals`
-    pedal_boards: HashMap<String, String>,
+    // and organised by `preocess_modep.pl`).
+    pedal_boards: HashMap<String, Vec<String>>,
 
     // A transmitter for each `Handle` so changes in state can be
     // propagated to the `WSHandler` objects, and thus to the clients.
@@ -119,7 +118,8 @@ impl ServerState {
         //         }
         //     }
         // }
-        let pedal_boards: HashMap<String, String> = load_pedal_boards();
+        let pedal_boards: HashMap<String, Vec<String>> =
+            load_pedal_boards();
         let selected_pedal_board: String =
             pedal_boards.keys().nth(0).unwrap().to_string();
         ServerState {
@@ -224,7 +224,7 @@ impl WSHandler {
 
                 // This is the message for the client
                 let content = format!("PEDALSTATE {}", state.state);
-		info!("From client: {}", content);
+                info!("From client: {}", content);
                 let message = shared::ServerMessage {
                     id: out_t.token().into(),
                     text: content,
@@ -233,7 +233,10 @@ impl WSHandler {
                 info!("sending message: {:?}", message);
 
                 let token: usize = out_t.token().into();
-                info!("WSHandler::run: send_message {:?} to {}", &message, &token);
+                info!(
+                    "WSHandler::run: send_message {:?} to {}",
+                    &message, &token
+                );
                 let server_msg: ws::Message =
                     serde_json::to_string(&message).unwrap().into();
                 match out_t.broadcast(server_msg) {
@@ -379,8 +382,8 @@ impl ws::Handler for WSHandler {
                                 self.server_state.lock().unwrap();
 
                             match server_state.pedal_boards.get(pedal_name) {
-                                Some(pedal) => {
-                                    set_instrument(pedal);
+                                Some(_) => {
+                                    set_instrument(pedal_name);
                                     server_state.selected_pedal_board =
                                         pedal_name.to_string();
                                 }
@@ -476,7 +479,8 @@ enum ControlType {
     File(String),
     Command(String),
 }
-/// Access the `control` binary.  This will block!  
+/// Access the `control` binary.  This will block!
+/// TODO Deprecate this.  Do not use `./control`
 fn run_control(command: &ControlType) {
     // Get the root directory where`control` lives
     let dir = match env::var("PATH_MI_ROOT") {
@@ -490,8 +494,8 @@ fn run_control(command: &ControlType) {
 
     let exec_name = format!("{}/control", dir);
     match command {
-	ControlType::File(f) => info!("Command type: File({})", f),
-	ControlType::Command(f) => info!("Command type: Command({})", f),
+        ControlType::File(f) => info!("Command type: File({})", f),
+        ControlType::Command(f) => info!("Command type: Command({})", f),
     };
     info!(
         "exec_name {} {}",
@@ -538,13 +542,20 @@ fn run_control(command: &ControlType) {
     assert!(res);
 }
 
-fn set_instrument(file_path: &str) {
-    info!("set_instrument: file_path {}", file_path);
-    run_control(&ControlType::File(file_path.to_string()));
+/// Sets the bank of effects controlled by the pedal. The argument
+/// `name` is the first part of a line in PEDALS/.LIST
+fn set_instrument(name: &str) {
+    info!("set_instrument: file_path {}", name);
 
-    // Connect VU meter if there
-    run_control(&ControlType::Command("b".to_string()));
-
+    let list = getLIST();
+    match list.get(&name.to_string()){
+        Some(vec_names) => {
+            for name in vec_names {
+                println!("Name: {}", name);
+            }
+        }
+        None => eprintln!("Cannot find pedal bank names {}", name),
+    };
     info!("set_instrument done");
 }
 
@@ -559,61 +570,67 @@ fn send_message(
     out.broadcast(server_msg)
 }
 
+/// Get the list of "pedal boards" from the file system and return it
+/// as a hash keyed by the board's name and the value a vector of
+/// pedal names.  The pedal names map to files in PEDALS/
+fn getLIST() -> HashMap<String, Vec<String>> {
+    // Get the list of pedal boards that are used. There can be more
+    // pedal boards in the directpry than are used.
+
+    // First find the directory:
+    let dir = get_dir();
+
+    let mut list_d = "".to_string();
+    File::open(format!("{}/.LIST", &dir).as_str())
+        .unwrap()
+        .read_to_string(&mut list_d);
+
+    list_d
+        .as_str()
+        .lines()
+        .filter(|x| {
+            x
+                // This skips blank lines and lines where first
+                // non-whitespace character is '#'
+                // Split line into whitspace seperated words
+                .split_whitespace()
+                // Choose the next word.  If no words return "#".
+                // This will force blank lines to be skipped
+                .next()
+                .unwrap_or("#")
+                .bytes()
+                // Get first byte
+                .next()
+                .unwrap()
+                != b'#'
+        })
+        .map(|x| {
+            // Make a 2-tupple name => value
+            match x.split_once(':') {
+                Some((name, value)) => {
+                    let pedals: Vec<String> =
+                        value.split_whitespace().
+			map(|x| x.to_string()).
+			collect();
+                    (name.to_string(), pedals)
+                }
+                None => panic!("No name on string {}", x),
+            }
+        })
+        .collect()
+}
+
 //fn load_pedal_boards() -> ServerState {
-fn load_pedal_boards() -> HashMap<String, String> {
+fn load_pedal_boards() -> HashMap<String, Vec<String>> {
     // Build the list of pedal boards and select one to be
     // current. That defines a `ServerState`.
 
     // The pedal boards are described in PEDALS/.LIST.  Each line is:
     // <Pedal board name>: <board> <board> <board>
 
-    // First find the directory:
-    let dir = get_dir();
-
     // Get the list of pedal boards that are used. There can be more
     // pedal boards in the directpry than are used.
-    let list_name = format!("{}/.LIST", &dir);
-
-    info!("fn load_pedal_boards: list_name: {}", list_name);
-
-    let mut list_d = String::new();
-
-    File::open(list_name.as_str())
-        .unwrap()
-        .read_to_string(&mut list_d)
-        .unwrap();
-
-    // Collect the pedal board definitions
-    //let pedal_boards: HashMap<String, String> =
-    list_d
-        .as_str()
-        .lines()
-        .filter(
-            |x| {
-                x
-                    // This skips blank lines and lines where first
-                    // non-whitespace character is '#'
-                    // Split line into whitspace seperated words
-                    .split_whitespace()
-                    // Choose the next word.  If no words return "#".
-                    // This will force blank lines to be skipped
-                    .next()
-                    .unwrap_or("#")
-                    .bytes()
-                    // Get first byte
-                    .next()
-                    .unwrap()
-                    != b'#'
-            }, 
-        )
-        .map(|x| {
-            // Make a 2-tupple name => value
-            match x.split_once(':') {
-                Some((name, value)) => (name.to_string(), value.to_string()),
-                None => panic!("No name on string {}", x),
-            }
-        })
-        .collect()
+    getLIST()
 }
 
 fn main() -> std::io::Result<()> {
