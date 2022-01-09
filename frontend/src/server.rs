@@ -14,7 +14,6 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::File;
-use std::io::prelude::*;
 use std::io::Read;
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
@@ -22,7 +21,6 @@ use std::os::unix::io::{AsRawFd, RawFd};
 use std::os::wasi::io::{AsRawFd, RawFd};
 use std::path::Path;
 use std::process;
-use std::process::Stdio;
 use std::sync::mpsc;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -118,8 +116,7 @@ impl ServerState {
         //         }
         //     }
         // }
-        let pedal_boards: HashMap<String, Vec<String>> =
-            load_pedal_boards();
+        let pedal_boards: HashMap<String, Vec<String>> = load_pedal_boards();
         let selected_pedal_board: String =
             pedal_boards.keys().nth(0).unwrap().to_string();
         ServerState {
@@ -371,11 +368,8 @@ impl ws::Handler for WSHandler {
                     }
 
                     // INSTR is when a user has selected a
-                    // pedal.
+                    // pedal board.
                     "INSTR" => {
-                        // INSTR <pedal>
-                        // User has selected a pedal
-
                         if cmds.len() > 1 {
                             let pedal_name = cmds[1];
                             let mut server_state =
@@ -474,84 +468,49 @@ fn set_pedal(p: char) {
 }
 */
 
-// TODO: Comment this.  What is it for?
-enum ControlType {
-    File(String),
-    Command(String),
-}
-/// Access the `control` binary.  This will block!
-/// TODO Deprecate this.  Do not use `./control`
-fn run_control(command: &ControlType) {
-    // Get the root directory where`control` lives
-    let dir = match env::var("PATH_MI_ROOT") {
-        Ok(d) => d,
-        Err(_) => {
-            // Environment variable not set.  We used to try to find
-            // it relative to the current directory, bad idea.
-            panic!("Set the PATH_MI_ROOT environment variable")
-        }
-    };
-
-    let exec_name = format!("{}/control", dir);
-    match command {
-        ControlType::File(f) => info!("Command type: File({})", f),
-        ControlType::Command(f) => info!("Command type: Command({})", f),
-    };
-    info!(
-        "exec_name {} {}",
-        exec_name,
-        match command {
-            ControlType::File(file_path) => format!("File {}", file_path),
-            ControlType::Command(cmd) => format!("Command {}", cmd),
-        }
-    );
-    let mut child = match command {
-        ControlType::File(file_path) => {
-            let mut process = process::Command::new(exec_name.as_str())
-                .arg(file_path)
-                .stdout(process::Stdio::piped())
-                .stderr(process::Stdio::piped())
-                .spawn()
-                .expect("Failed");
-            let mut stdout = process.stdout.take().unwrap();
-            let mut output: Vec<u8> = Vec::new();
-            stdout.read_to_end(&mut output).unwrap();
-            info!("Control stdout: {}", String::from_utf8(output).unwrap());
-            let mut stderr = process.stderr.take().unwrap();
-            let mut errput: Vec<u8> = Vec::new();
-            stderr.read_to_end(&mut errput).unwrap();
-            info!("Control stderr: {}", String::from_utf8(errput).unwrap());
-            process
-        }
-        ControlType::Command(cmd) => {
-            let mut process = process::Command::new(exec_name.as_str())
-                .stdin(Stdio::piped())
-                .stdout(process::Stdio::piped())
-                .stderr(process::Stdio::piped())
-                .spawn()
-                .expect("Failed");
-            let mut stdin = process.stdin.take().unwrap();
-            stdin.write_all(cmd.as_bytes()).expect("Failed to send cmd");
-            process
-        }
-    };
-
-    let ecode = child.wait().expect("failed to wait on child");
-    let res = ecode.success();
-    info!("set_instrument: res: {}", res);
-    assert!(res);
-}
-
 /// Sets the bank of effects controlled by the pedal. The argument
 /// `name` is the first part of a line in PEDALS/.LIST
 fn set_instrument(name: &str) {
     info!("set_instrument: file_path {}", name);
 
-    let list = getLIST();
-    match list.get(&name.to_string()){
+    let list = get_list();
+
+    // The pedal board is implemented by links in the PEDALS directory
+    // pointing at files that have the instructions to configure the
+    // JACK pipes to implement the pedal
+    let mut link_letter = 'A';
+    match list.get(&name.to_string()) {
         Some(vec_names) => {
             for name in vec_names {
-                println!("Name: {}", name);
+                let mut process = process::Command::new("/bin/ln")
+                    .arg("-s")
+                    .arg("-f")
+                    .arg(format!("{}/{}", get_dir(), name.as_str()).as_str())
+                    .arg(format!("{}/{}", get_dir(), &link_letter).as_str())
+                    .stdout(process::Stdio::piped())
+                    .stderr(process::Stdio::piped())
+                    .spawn()
+                    .expect("Failed");
+                let mut stdout = process.stdout.take().unwrap();
+                let mut stderr = process.stderr.take().unwrap();
+                let mut output: Vec<u8> = Vec::new();
+                let mut errput: Vec<u8> = Vec::new();
+                stdout.read_to_end(&mut output).unwrap();
+                stderr.read_to_end(&mut errput).unwrap();
+                let ecode =
+                    process.wait().expect("failed to wait on link process");
+                let res = ecode.success();
+                info!("set link {} ->  {}  Res: {}", &link_letter, name, res);
+                info!(
+                    "set link output: {}",
+                    String::from_utf8(output).unwrap()
+                );
+                info!(
+                    "set link errput: {}",
+                    String::from_utf8(errput).unwrap()
+                );
+                assert!(res);
+                link_letter = (link_letter as u8 + 1) as char;
             }
         }
         None => eprintln!("Cannot find pedal bank names {}", name),
@@ -573,7 +532,7 @@ fn send_message(
 /// Get the list of "pedal boards" from the file system and return it
 /// as a hash keyed by the board's name and the value a vector of
 /// pedal names.  The pedal names map to files in PEDALS/
-fn getLIST() -> HashMap<String, Vec<String>> {
+fn get_list() -> HashMap<String, Vec<String>> {
     // Get the list of pedal boards that are used. There can be more
     // pedal boards in the directpry than are used.
 
@@ -583,7 +542,8 @@ fn getLIST() -> HashMap<String, Vec<String>> {
     let mut list_d = "".to_string();
     File::open(format!("{}/.LIST", &dir).as_str())
         .unwrap()
-        .read_to_string(&mut list_d);
+        .read_to_string(&mut list_d)
+        .unwrap();
 
     list_d
         .as_str()
@@ -608,10 +568,10 @@ fn getLIST() -> HashMap<String, Vec<String>> {
             // Make a 2-tupple name => value
             match x.split_once(':') {
                 Some((name, value)) => {
-                    let pedals: Vec<String> =
-                        value.split_whitespace().
-			map(|x| x.to_string()).
-			collect();
+                    let pedals: Vec<String> = value
+                        .split_whitespace()
+                        .map(|x| x.to_string())
+                        .collect();
                     (name.to_string(), pedals)
                 }
                 None => panic!("No name on string {}", x),
@@ -630,7 +590,7 @@ fn load_pedal_boards() -> HashMap<String, Vec<String>> {
 
     // Get the list of pedal boards that are used. There can be more
     // pedal boards in the directpry than are used.
-    getLIST()
+    get_list()
 }
 
 fn main() -> std::io::Result<()> {
