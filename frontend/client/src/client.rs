@@ -131,7 +131,7 @@ fn instrument_div(
     selected: &Option<Selected>,
 ) -> Node<Msg> {
     log!(format!(
-        "fn instrument_div {} {} {} {:?} ",
+        "fn instrument_div({}, {}, {}, {:?}) ",
         instrument, pedal_name, height, selected
     )
     .as_str());
@@ -191,11 +191,11 @@ fn instrument_div(
             // The class of the span
             C!["instrument-name"],
             style![
-            // The whole page is 10em: ?? Is that a measurement of
-            // a particular piece of hardware, a assumtion, or a
-            // definition?
+                // The whole page is 10em: ?? Is that a measurement of
+                // a particular piece of hardware, a assumtion, or a
+                // definition?
             St::FontSize =>
-                format!("{}em", (10.0 * height_div_percent) as f32/100.0),
+                        format!("{}em", (10.0 * height_div_percent) as f32/100.0),
 
             St::WordWrap => "break-word".to_string()
             ],
@@ -305,7 +305,10 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
 
                 // Pedal used on server
                 &"PEDALSTATE" => {
-                    model.pedal_state = Some(cmds[1].chars().next().unwrap());
+                    let pedal_state: Option<char> =
+                        Some(cmds[1].parse::<u8>().unwrap() as char);
+                    log!(my_now(), "fn update PEDALSTATE: {}", pedal_state);
+                    model.pedal_state = pedal_state;
                 }
 
                 // Otherwise we are getting told which instrument has
@@ -389,7 +392,11 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
             // If `msg` is: "INSTR <instrument>" then we are telling
             // the server to select that instrument so that instrument
             // gets selected
-            log!(my_now(), "fn update: Client received msg.text: {}", msg.text);
+            log!(
+                my_now(),
+                "fn update: Client received msg.text: {}",
+                msg.text
+            );
             if msg.text.as_str().starts_with("INSTR ") {
                 log!(my_now(), "fn update: msg.text[6..]: {}", msg.text[6..]);
                 model.selected = Some(Selected {
@@ -432,7 +439,7 @@ fn view(model: &Model) -> Vec<Node<Msg>> {
             let name: String = path_to_name(i.as_str()).to_string();
             let div = instrument_div(
                 &name,
-                format!("Pedal: {}", model.pedal_state.unwrap_or('?')),
+                format!("{}", model.pedal_state.unwrap_or('?')),
                 1.0_f32 / model.instruments.len() as f32,
                 &model.selected,
             );
