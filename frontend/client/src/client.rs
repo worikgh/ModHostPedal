@@ -35,7 +35,7 @@ pub struct Model {
     // The server has a pedal attached to it.  It can be in any of a
     // number of states (three with current pedal).  The state of the
     // pedal is expressed by a character.
-    pedal_state: char,
+    pedal_state: Option<char>,
 
     // Count how many messages get sent.  FIXME Why?
     sent_messages_count: usize,
@@ -131,7 +131,7 @@ fn instrument_div(
     selected: &Option<Selected>,
 ) -> Node<Msg> {
     log!(format!(
-        "instrument_div {} {} {} {:?} ",
+        "fn instrument_div {} {} {} {:?} ",
         instrument, pedal_name, height, selected
     )
     .as_str());
@@ -159,14 +159,18 @@ fn instrument_div(
         }
     };
 
-    log!(if active { "active" } else { "inactive" });
+    log!(if active {
+        "fn instrument_div: active"
+    } else {
+        "fn instrument_div: inactive"
+    });
 
     // For CSS height is in percent.  0 < height < 1
     let height_div_percent = (100.0 * height).floor();
 
     // To send to server on click.  Causes this instrument to be
     // selected
-    let message = format!("INSTR {}", instrument);
+    let message = format!("INSTR {}", &instrument);
     // HTML to return
     div![
         C![class],
@@ -174,7 +178,11 @@ fn instrument_div(
             let instrument_clone = instrument.clone();
             // Return the closure to execute if there is a click
             move |_| {
-                log!(my_now(), "Ev::Click ", instrument_clone);
+                log!(
+                    my_now(),
+                    "fn instrument_div Ev::Click ",
+                    instrument_clone
+                );
                 Msg::SendMessage(shared::ClientMessage { text: message })
             }
         }),
@@ -218,11 +226,11 @@ fn instrument_div(
 
 /// Called by `Seed` to initialise the application..  
 fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
-    log!(my_now(), "Init: url: >>", url);
+    log!(my_now(), "fn init: url: >>", url);
 
     Model {
         instruments: Vec::new(),
-        pedal_state: 'a', // Arbitrary
+        pedal_state: None,
         selected: None,
         sent_messages_count: 0,
         messages: Vec::new(),
@@ -236,12 +244,12 @@ fn init(url: Url, orders: &mut impl Orders<Msg>) -> Model {
 /// Called when a message is received.  Adjust state in `model` and
 /// respond to server messages
 fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
-    log!(my_now(), "update");
+    log!(my_now(), "fn update");
     match msg {
         // Opened a websocked.  Send a message asking for data to
         // initialise the client
         Msg::WebSocketOpened => {
-            log!(my_now(), "WebSocket connection is open now");
+            log!(my_now(), "fn update: WebSocket connection is open now");
             model.web_socket_reconnector = None;
 
             // Get the data needed to set up the client
@@ -258,7 +266,11 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
 
         // The server has sent some information.
         Msg::TextMessageReceived(message) => {
-            log!(my_now(), "Client received a text message", message.text);
+            log!(
+                my_now(),
+                "fn update: Client received a text message",
+                message.text
+            );
 
             // Split the server message by white space.  The first
             // word is the command, it has no white space in it.  The
@@ -274,7 +286,7 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
                 // instruments
                 &"INIT" => {
                     assert!(cmds.len() > 2);
-                    log!(my_now(), "Got INIT");
+                    log!(my_now(), "fn update: Got INIT");
                     model.instruments.clear();
                     // The first line is the instrument that is selected
                     model.selected = Some(Selected {
@@ -283,20 +295,26 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
                     });
                     //for i in 2..cmds.len() {
                     for item in cmds.iter().skip(2) {
-                        log!(my_now(), format!("Got instrument {}", &item));
+                        log!(
+                            my_now(),
+                            format!("fn update: Got instrument {}", &item)
+                        );
                         model.instruments.push(item.to_string());
                     }
                 }
 
                 // Pedal used on server
                 &"PEDALSTATE" => {
-                    model.pedal_state = cmds[1].chars().next().unwrap();
+                    model.pedal_state = Some(cmds[1].chars().next().unwrap());
                 }
 
                 // Otherwise we are getting told which instrument has
                 // been selected
                 instrument => {
-                    log!(my_now(), format!("Got instrument: {}", &instrument));
+                    log!(
+                        my_now(),
+                        format!("fn update: Got instrument: {}", &instrument)
+                    );
                     model.selected = Some(Selected {
                         name: (*instrument).to_string(),
                         state: SelectedState::Ready,
@@ -311,13 +329,13 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
 
         // We do not use binary messages.
         Msg::BinaryMessageReceived(message) => {
-            log!(my_now(), "Client received binary message");
+            log!(my_now(), "fn update: Client received binary message");
             panic!("Binary message received: {:?}", message);
             //model.messages.push(message.text);
         }
 
         Msg::CloseWebSocket => {
-            log!(my_now(), "Client received CloseWebsocket");
+            log!(my_now(), "fn update: Client received CloseWebsocket");
             model.web_socket_reconnector = None;
             model
                 .web_socket
@@ -326,7 +344,7 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
         }
 
         Msg::WebSocketClosed(close_event) => {
-            log!("==================");
+            log!("fn update:  ==================");
             log!("WebSocket connection was closed:");
             log!("Clean:", close_event.was_clean());
             log!("Code:", close_event.code());
@@ -344,7 +362,7 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
         }
 
         Msg::WebSocketFailed => {
-            log!(my_now(), "WebSocket failed");
+            log!(my_now(), "fn update: WebSocket failed");
             if model.web_socket_reconnector.is_none() {
                 model.web_socket_reconnector = Some(orders.stream_with_handle(
                     streams::backoff(None, Msg::ReconnectWebSocket),
@@ -353,17 +371,17 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
         }
 
         Msg::ReconnectWebSocket(retries) => {
-            log!(my_now(), "Reconnect attempt:", retries);
+            log!(my_now(), "fn update: Reconnect attempt:", retries);
             model.web_socket = create_websocket(orders);
         }
 
         Msg::InputTextChanged(text) => {
-            log!(my_now(), "Client received InputTextChanged");
+            log!(my_now(), "fn update: Client received InputTextChanged");
             model.input_text = text;
         }
 
         Msg::InputBinaryChanged(text) => {
-            log!(my_now(), "Client received InputBinaryChanged");
+            log!(my_now(), "fn update: Client received InputBinaryChanged");
             model.input_binary = text;
         }
 
@@ -371,9 +389,9 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
             // If `msg` is: "INSTR <instrument>" then we are telling
             // the server to select that instrument so that instrument
             // gets selected
-            log!(my_now(), "Client received msg.text: {}", msg.text);
+            log!(my_now(), "fn update: Client received msg.text: {}", msg.text);
             if msg.text.as_str().starts_with("INSTR ") {
-                log!(my_now(), "msg.text[6..]: {}", msg.text[6..]);
+                log!(my_now(), "fn update: msg.text[6..]: {}", msg.text[6..]);
                 model.selected = Some(Selected {
                     name: msg.text[6..].to_string(),
                     state: SelectedState::Initialising,
@@ -395,6 +413,8 @@ fn update(msg: Msg, mut model: &mut Model, orders: &mut impl Orders<Msg>) {
 
 /// Updates the user interface
 fn view(model: &Model) -> Vec<Node<Msg>> {
+    log!(my_now(), "fn view: ");
+
     // `body` is a convenience function to access the web_sys DOM
     // body. https://docs.rs/seed/0.8.0/seed/browser/util/fn.body.html
     body().style().set_css_text("height: 100%");
@@ -406,14 +426,17 @@ fn view(model: &Model) -> Vec<Node<Msg>> {
     if model.web_socket.state() == web_socket::State::Open {
         for i in &model.instruments {
             //.iter() {
-            log!(my_now(), "View: Instrument: ", i);
+            log!(my_now(), "fn view: View: Instrument: ", i);
 
-            ret.push(instrument_div(
-                &path_to_name(i.as_str()).to_string(),
-                format!("Pedal: {}", model.pedal_state),
+            // The name is the last element of the path in `i`
+            let name: String = path_to_name(i.as_str()).to_string();
+            let div = instrument_div(
+                &name,
+                format!("Pedal: {}", model.pedal_state.unwrap_or('?')),
                 1.0_f32 / model.instruments.len() as f32,
                 &model.selected,
-            ));
+            );
+            ret.push(div);
         }
     } else {
         ret.push(div![p![em!["Connecting or closed"]]]);
