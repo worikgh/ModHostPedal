@@ -15,6 +15,7 @@ use std::env;
 use std::fs;
 use std::fs::File;
 use std::io::Read;
+use std::io::{self, BufRead};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(target_os = "wasi")]
@@ -512,6 +513,46 @@ fn set_instrument(name: &str) {
                 assert!(res);
                 link_letter = (link_letter as u8 + 1) as char;
             }
+            // Signal the driver so it reads the new pedal layout
+            let file =
+                File::open(format!("{}/../.driver.pid", get_dir()).as_str())
+                    .unwrap();
+            nix::fcntl::flock(file.as_raw_fd(), FlockArg::LockExclusive)
+                .unwrap();
+
+            let driver_pid: u64 = io::BufReader::new(file)
+                .lines()
+                .next()
+                .unwrap()
+                .unwrap()
+                .parse()
+                .unwrap();
+
+            let mut process = process::Command::new("/bin/kill")
+                .arg(format!("{}", driver_pid).as_str())
+                .arg("-HUP")
+                .stdout(process::Stdio::piped())
+                .stderr(process::Stdio::piped())
+                .spawn()
+                .expect("Failed");
+            let mut stdout = process.stdout.take().unwrap();
+            let mut stderr = process.stderr.take().unwrap();
+            let mut output: Vec<u8> = Vec::new();
+            let mut errput: Vec<u8> = Vec::new();
+            stdout.read_to_end(&mut output).unwrap();
+            stderr.read_to_end(&mut errput).unwrap();
+            let ecode = process.wait().expect("failed to wait signal driver");
+            let res = ecode.success();
+            info!("kill -HUP {}", driver_pid);
+            info!(
+                "signal driver output: {}",
+                String::from_utf8(output).unwrap()
+            );
+            info!(
+                "signal driver errput: {}",
+                String::from_utf8(errput).unwrap()
+            );
+            assert!(res);
         }
         None => eprintln!("Cannot find pedal bank names {}", name),
     };
