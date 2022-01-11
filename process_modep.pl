@@ -396,9 +396,10 @@ my $pedal_dir = "$PATH_MI_ROOT/PEDALS";
 ## Delete old pedals
 opendir(my $pedals, $pedal_dir) or die "$!: $pedal_dir ";
 my @files =
-    grep{/[a-zA-Z0-9_]\S/} ## Filter out the pedal links which are single character
+    grep{/^[a-zA-Z0-9_]\S/} ## Filter out the pedal links which are single character
 readdir($pedals);
 foreach my $file (@files){
+    
     my $df = "$pedal_dir/$file"; 
     unlink $df or die "$!: $file";
 }
@@ -415,7 +416,7 @@ foreach my $name (sort keys %control_commands){
     seek($now, 0, 0);
 
     my @res = `$PATH_MI_ROOT/control $tmpFn`;
-    # print STDERR  "Finished with control\n";
+    # print STDERR  "Finished with control \$? $?\n";
     my $_name = "$pedal_dir/$name";
     if(! grep {/FAIL/} @res ){
 	# print STDERR "\$_name: $_name\n";
