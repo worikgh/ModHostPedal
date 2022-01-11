@@ -323,7 +323,8 @@ sub mod_host( $ ){
 
     my $sock = new IO::Socket::INET( PeerAddr => 'localhost',
 				     PeerPort => $port, 
-				     Proto => 'tcp') or die $!; 
+				     Proto => 'tcp') or
+	die "$!: Failed to connect to mod-host"; 
 
     ## Debugging why some effects randomly fail to be added
     my $failed = 0;
