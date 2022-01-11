@@ -1,0 +1,22 @@
+#!/usr/bin/perl -w
+use strict;
+my $ROOT = $ENV{PATH_MI_ROOT};
+defined($ROOT) or $ROOT = `pwd`;
+chomp $ROOT;
+
+## Set the pedal links in the PEDALS directory.
+
+## Hard coded to three pedals ('A', 'B', and 'C') for now
+
+## Pass the names of the pedals to link on the command line in A..C order
+
+my @pedals = @ARGV;
+scalar(@pedals) == 3 or die "Hard coded there must be three pedals";
+
+unlink("$ROOT/PEDALS/A") or warn("Failed to delete A");
+unlink("$ROOT/PEDALS/B") or warn("Failed to delete B");
+unlink("$ROOT/PEDALS/C") or warn("Failed to delete C");
+
+symlink("$ROOT/PEDALS/$pedals[0]", "$ROOT/PEDALS/A") or die("$!: Failed to create A");
+symlink("$ROOT/PEDALS/$pedals[1]", "$ROOT/PEDALS/B") or die("$!: Failed to create B");
+symlink("$ROOT/PEDALS/$pedals[2]", "$ROOT/PEDALS/C") or die("$!: Failed to create C");
