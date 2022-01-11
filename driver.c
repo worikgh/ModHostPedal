@@ -4,6 +4,7 @@
  three keys 'A', 'B', 'C'.  When a key is pressed an LV2 effect chain
  is enabled, and an old one disabled
  */
+#include <linux/limits.h>
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -26,13 +27,15 @@ jack_client_t *CLIENT;
 // Reset this to exit main loop
 int RUNNING = 1;
 
+struct jack_connection;
+struct pedal_config;
+
 void Log(char * sp, ...);
 int load_pedal(char);
 void print_pedal(char pedal);
 void clear_jack();
 void initialise_pedals();
 void destroy_pedals();
-struct jack_connection;
 int connected(const char * port_a, const char * port_b);
 void free_connection(struct jack_connection  * jc);
 void print_connections();
@@ -71,10 +74,11 @@ void implement_pedal(char * pedal, char * old_pedal){
 	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
 #endif
   if ( pedal == NULL ) {
+    // TODO Is this possible? Should this be a crash?
     return;
   }
-
   
+  // Get the configuration data for the old and new pedal
   struct pedal_config * pc;
   struct pedal_config * opc = NULL;
   switch (*pedal) {
@@ -111,6 +115,8 @@ void implement_pedal(char * pedal, char * old_pedal){
     }
     clean_cfg(pc, opc);
   }
+
+  // Connect the new pedal
   for (unsigned i = 0; i < pc->n_connections; i++){
     char * src_port = pc->connections[i].ports[0];
     char * dst_port = pc->connections[i].ports[1];
@@ -140,19 +146,6 @@ void implement_pedal(char * pedal, char * old_pedal){
   Log( "%s:%d END implement_pedal %c -> %c\n",
 	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
 #endif
-}
-
-// Test if these two ports are connected
-int connected(const char * port_a, const char * port_b) {
-  jack_port_t * jpt_a = jack_port_by_name(CLIENT, port_a);
-#ifdef VERBOSE
-  jack_port_t * jpt_b  = jack_port_by_name(CLIENT, port_b);
-  int res1 = jack_port_connected_to(jpt_a, port_b);
-  int res2 = jack_port_connected_to(jpt_b, port_a);
-  Log( "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
-	  __FILE__, __LINE__, port_a, port_b, res1, res2);
-#endif
-  return jack_port_connected_to(jpt_a, port_b);
 }
 
 void deimplement_pedal(char * pedal){
@@ -202,10 +195,13 @@ void deimplement_pedal(char * pedal){
 
 	  /*
 	    jack is returning -1 even though it has disconected the
-	    connection.  So double check
+	    connection.  So double check.  If the ports are still
+	    connected then exit
 	   */
 	  int bail_out = connected(src_port, dst_port);
- 	  Log("%s:%d: FAILURE  %c %s %s  jack_disconnect returned %d %s\n",
+	  
+ 	  Log("%s:%d: FAILURE  Pedal: %c %s -> %s  "
+	      "jack_disconnect returned %d %s\n",
 	      __FILE__, __LINE__, *pedal, src_port, dst_port, r,
 	      bail_out ? " Bailing out" : " Every thing is OK");
 	  if(bail_out) {
@@ -219,6 +215,20 @@ void deimplement_pedal(char * pedal){
   Log( "%s:%d\n", __FILE__, __LINE__);
 #endif
 }
+
+// Test if these two ports are connected
+int connected(const char * port_a, const char * port_b) {
+  jack_port_t * jpt_a = jack_port_by_name(CLIENT, port_a);
+#ifdef VERBOSE
+  jack_port_t * jpt_b  = jack_port_by_name(CLIENT, port_b);
+  int res1 = jack_port_connected_to(jpt_a, port_b);
+  int res2 = jack_port_connected_to(jpt_b, port_a);
+  Log( "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
+	  __FILE__, __LINE__, port_a, port_b, res1, res2);
+#endif
+  return jack_port_connected_to(jpt_a, port_b);
+}
+
 /* Tests if the `bit`th bit is set in `array.  Used to detect pedaal
    depressions` */
 int test_bit(unsigned bit, uint8_t *array)
@@ -255,6 +265,10 @@ void jack_shutdown (void *arg)
 // Add a jack connection between `jc1` and `jc2` for a pedal defined
 // in `pedal` into the configuration structure
 void add_pedal_effect(char pedal, const char * jc1, const char* jc2){
+
+#ifdef VERBOSE
+  Log("add_pedal_effect(%c, %s, %s)\n", pedal, jc1, jc2);
+#endif
   struct pedal_config * pc = NULL;
   switch (pedal) {
   case 'A': 
@@ -341,7 +355,7 @@ int load_pedal(char p){
   char  scriptname[PATH_MAX];
 
   const char * path_mi_root;
-  char ch;
+  int ch;
 
   /* We do not want buffer overruns... */
   const uint LINE_MAX = 1024;
@@ -368,27 +382,32 @@ int load_pedal(char p){
   assert(fd);
   i = 0;
   while((ch = fgetc(fd)) != EOF && i < LINE_MAX){  /* while(!feof(fd)){ */
-
+    
     line[i] = ch;
     if((ch >= 'a'  && ch <= 'z') ||
        (ch >= 'A'  && ch <= 'Z') ||
        (ch >= '0' && ch <= '9') ||
        ch == '_' || ch == ' ' || ch == ':' || ch == '\n'){
+
       if(line[i] == '\n'){
 	line[i] = '\0';
 	process_line(pedal, line);
 	i = 0;
+
       }else{
 	i++;
-      }
+      }	
     }else{
-      break;
+      // FIXME  I do not think this is ever called
+      Log("Bad character: %c Position: %d\n", ch, i);
     }
   }
 
   // Ensure that no line overflowed the buffer
-  assert(i < LINE_MAX);
-  
+  if(i >= LINE_MAX){
+    Log("i: %d script: %s\n", i, scriptname);
+    assert(i < LINE_MAX);
+  }
   return 0;
 }
 
@@ -432,13 +451,26 @@ int main(int argc, char * argv[]) {
   chdir(home_dir);
 
   pid_t pid = getpid();
-  FILE * fd_pid = fopen(".driver.pid", "w");
+  int fd_pid = open(".driver.pid", O_WRONLY);
   assert(fd_pid);
   
-  int pid_res = fprintf(fd_pid, "%d", pid);
-  Log( "%s\n", strerror(errno));
+  // Lock the file because the front end used this to communicate with
+  // this programme.  
+  if(!fcntl(fd_pid, F_SETLK, F_WRLCK)){
+    Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+    exit(-1);
+  }
+
+  int pid_res = dprintf(fd_pid, "%d", pid);
+
+  if(close(fd_pid) < 0){
+    Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+    return -1;
+  }	
+
+  Log( "Wrote pid: %d. Error: %s\n", pid, strerror(errno));
   assert(pid_res > 0);
-  fclose(fd_pid);
+
   
   /* printf("Driver getting started in %s\n", home_dir); */
 
@@ -466,13 +498,16 @@ int main(int argc, char * argv[]) {
   char * current_pedal = NULL;
   char A = 'A', B = 'B', C = 'C';
 
-  /* int loop_limit = 0; */
+#ifdef PROFILE
+  int loop_limit = 0;
+#endif
   Log("Starting main loop\n");
   while(RUNNING == 1){
-    /* if(loop_limit++ > 120){ */
-    /*   RUNNING = 0; */
-    /* } */
-
+#ifdef PROFILE
+     if(loop_limit++ > 12){
+      RUNNING = 0;
+    }
+#endif
     tv.tv_sec = 200;
     tv.tv_usec = 0;
     FD_ZERO(&rfds);
@@ -480,7 +515,7 @@ int main(int argc, char * argv[]) {
     retval = select(fd+1, &rfds, NULL, NULL, &tv);
 
     if(retval < 0){
-      printf("select Error %s\n", strerror(errno));
+      Log("select Error %s\n", strerror(errno));
 
       // TODO: What is this constant: 4?
       if(errno == 4){
@@ -489,6 +524,7 @@ int main(int argc, char * argv[]) {
 	Log( "%s:%d: signaled: %d\n",
 		__FILE__, __LINE__, signaled);
 	if(signaled){
+	  fprintf(stderr, "signaled\n");
 	  destroy_pedals();
 	  initialise_pedals();
 	}
@@ -497,10 +533,13 @@ int main(int argc, char * argv[]) {
       }
       return -1;
     }else if(retval == 0){
-      printf("Heartbeat...\n");
+#ifdef VERBOSE
+      Log("Heartbeat...");
+#endif
       continue;
     }
-    /* Log( "Before IOCTL\n"); */
+
+    // Read the keyboard
     memset(key_b, 0, sizeof(key_b));
     if(ioctl(fd, EVIOCGKEY(sizeof(key_b)), key_b) == -1){
       printf("IOCTL Error %s\n", strerror(errno));
@@ -546,6 +585,32 @@ int main(int argc, char * argv[]) {
 	  Log("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) +
 	  	 (c.tv_usec - a.tv_usec));
 	}
+
+	// Write a record of the pedal for the front end to read.  If
+	// there is one.
+	int fd_pedal;
+	char file_name[PATH_MAX];
+	const char * path_mi_root = getenv("PATH_MI_ROOT");
+	snprintf(file_name, PATH_MAX, "%s/PEDALS/.PEDAL", path_mi_root);
+	fd_pedal = open(file_name, O_WRONLY); // File must exist
+	if(fd < 0) {
+	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	  return fd;
+	}
+
+	// Lock the file so the front end does not get confused. It
+	// will lock it too
+	if(!fcntl(fd_pedal, F_SETLK, F_WRLCK)){
+	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	  return -1;
+	}
+
+	dprintf(fd_pedal, "%c", current_pedal ? *current_pedal : ' ');
+
+	if(close(fd_pedal) < 0){
+	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	  return -1;
+	}	
       }
     }
 
