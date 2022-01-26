@@ -28,7 +28,7 @@ simplelog = "^0.10.0"
 nix = "0.23.1"
 
 # server
-ncurses = "5.101.0"
+# ncurses = "5.101.0"
 
 [features]
 # default = []

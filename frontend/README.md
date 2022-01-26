@@ -1,11 +1,20 @@
 # Building the Frontend
 
-## Install rust!
+Uses websockets to communicate on `wasm` web apps to 
 
-Then wasm
+## Install rust and development environment!
+
+`sudo aptitude install libc6-dev libssl-dev`
+
+Then wasm and the tools for running the server
 
 `cargo install -f wasm-bindgen-cli`
- ?cargo install cargo-make?
+
+`cargo install cargo-make`
+
+`cargo install simple-http-server`
+
+Because because check [here](https://github.com/brotzeit/rustic) for `emacs` environment.  Make sure you install `lsp-mode` first
  
 Divided into two parts
 

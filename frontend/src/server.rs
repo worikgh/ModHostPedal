@@ -1,11 +1,11 @@
 // #[macro_use]
 extern crate log;
 
-extern crate ncurses;
+// extern crate ncurses;
 extern crate simplelog;
 
 use log::info; //, trace, warn};
-use ncurses::*;
+// use ncurses::*;
 use simplelog::*;
 
 use nix;
