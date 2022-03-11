@@ -88,7 +88,6 @@ struct pedal_config * get_pedal_config(const char c) {
   before the old connections for the pedal being replaced is
   disconnected/deimplemented.
 
-  If the first pedal is being implemented pass NULL for old_pedal
 */
 void implement_pedal(char * pedal){
 #ifdef VERBOSE
@@ -136,10 +135,10 @@ void implement_pedal(char * pedal){
 }
 
 
-// Disconnet the jack pipes that lead into this pedal.  `pedal` is the
-// old pedal being disconected.  `new_pedal` is the pedal that has
-// replaced it.  Before connecting anythiong from `pedal` ensure
-// `new_pedal` does not need it too.  
+// Disconnect the jack pipes that lead into this pedal.  `pedal` is
+// the old pedal being disconnected.  `new_pedal` is the pedal that
+// has replaced it.  Before connecting anything from `pedal` ensure
+// `new_pedal` does not need it too.
 void deimplement_pedal(char * pedal, char * new_pedal){
 #ifdef VERBOSE
   Log( "%s:%d\n", __FILE__, __LINE__);
@@ -179,7 +178,7 @@ void deimplement_pedal(char * pedal, char * new_pedal){
 
   for (unsigned i = 0; i < pc->n_connections; i++){
 
-    // The names of the jack ports to disconnet
+    // The names of the jack ports to disconnect
     if(pc->connections[i].ports[0]){
       // But only if they are existing.  They might have been deleted
       // if they are in the new configuration
@@ -197,7 +196,7 @@ void deimplement_pedal(char * pedal, char * new_pedal){
 	}
       }
       if(flag == 1){
-	// TYhio sconnection is still needed
+	// This connection is still needed
 	continue;
       }
       
@@ -242,7 +241,7 @@ int connected(const char * port_a, const char * port_b) {
   return jack_port_connected_to(jpt_a, port_b);
 }
 
-/* Tests if the `bit`th bit is set in `array.  Used to detect pedaal
+/* Tests if the `bit`th bit is set in `array.  Used to detect pedal
    depressions` */
 int test_bit(unsigned bit, uint8_t *array)
 {
