@@ -1,11 +1,12 @@
 /* https://www.linuxjournal.com/article/6429?page=0,1 */
 /*
- Userspace driver for a simple three key USB keyboard.  Hard coded to
- three keys 'A', 'B', 'C'.  When a key is pressed an LV2 effect chain
- is enabled, and an old one disabled
- */
+  Userspace driver for a simple three key USB keyboard.  Hard coded to
+  three keys 'A', 'B', 'C'.  When a key is pressed an LV2 effect chain
+  is enabled, and an old one disabled
+*/
 #include <linux/limits.h>
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <jack/jack.h>
@@ -26,6 +27,9 @@ jack_client_t *CLIENT;
 
 // Reset this to exit main loop
 int RUNNING = 1;
+
+// Where PEDALS can be found
+char home_dir[PATH_MAX + 1];
 
 struct jack_connection;
 struct pedal_config;
@@ -57,31 +61,10 @@ struct Pedals {
 struct Pedals pedals;
 
 
+struct pedal_config * get_pedal_config(const char c) {
 
-
-/*
-   Make the jack connections (from the system input to effect, from
-   effect to system output) that enables an effect. This is done
-   before the old connections for the pedal being replaced is
-   disconnected/deimplemented so ensure that any connections shared
-   between them are removed from the old configuration.
-
-   If the first pedal is being implemented pass NULL for old_pedal
-*/
-void implement_pedal(char * pedal, char * old_pedal){
-#ifdef VERBOSE
-  Log( "%s:%d implement_pedal %c -> %c\n",
-	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
-#endif
-  if ( pedal == NULL ) {
-    // TODO Is this possible? Should this be a crash?
-    return;
-  }
-  
-  // Get the configuration data for the old and new pedal
-  struct pedal_config * pc;
-  struct pedal_config * opc = NULL;
-  switch (*pedal) {
+  struct pedal_config * pc;  
+  switch (c) {
   case 'A':
     pc = &pedals.pedal_configA;
     break;
@@ -92,29 +75,33 @@ void implement_pedal(char * pedal, char * old_pedal){
     pc = &pedals.pedal_configC;
     break;
   default:
-    Log( "%s:%d implement_pedal Unknown: %c\n",
-	    __FILE__, __LINE__, pedal ? *pedal : '!');
+    Log( "%s:%d get_pedal_config Unknown: %c\n",
+	 __FILE__, __LINE__, c);
     assert(0);
   }
+  return pc;
+}  
 
-  if (old_pedal != NULL){
-    switch (*old_pedal) {
-    case 'A':
-      opc = &pedals.pedal_configA;
-      break;
-    case 'B':
-      opc = &pedals.pedal_configB;
-      break;
-    case 'C':
-      opc = &pedals.pedal_configC;
-      break;
-    default:
-      Log( "%s:%d implement_pedal Unknown: %c\n",
-	      __FILE__, __LINE__, old_pedal ? *old_pedal : '!');
-      assert(0);
-    }
-    clean_cfg(pc, opc);
+/*
+  Make the jack connections (from the system input to effect, from
+  effect to system output) that enables an effect. This is done
+  before the old connections for the pedal being replaced is
+  disconnected/deimplemented.
+
+  If the first pedal is being implemented pass NULL for old_pedal
+*/
+void implement_pedal(char * pedal){
+#ifdef VERBOSE
+  Log( "%s:%d implement_pedal %c\n",
+       __FILE__, __LINE__, *pedal);
+#endif
+  if ( pedal == NULL ) {
+    // TODO Is this possible? Should this be a crash?
+    return;
   }
+  
+  // Get the configuration data for the old and new pedal
+  struct pedal_config * pc = get_pedal_config(*pedal);
 
   // Connect the new pedal
   for (unsigned i = 0; i < pc->n_connections; i++){
@@ -126,16 +113,16 @@ void implement_pedal(char * pedal, char * old_pedal){
     }else{
 #ifdef VERBOSE
       Log( "%s:%d src_port: %s dst_port %s already connected\n",
-	      __FILE__, __LINE__, src_port, dst_port);
+	   __FILE__, __LINE__, src_port, dst_port);
 #endif
     }
 
     if(r != 0 && r != EEXIST){
       if(!connected(src_port, dst_port)){
 	Log( "%s:%d FAILURE %c %s => %s  jack_connect: %d\n",
-		__FILE__, __LINE__, *pedal, src_port, dst_port, r);
+	     __FILE__, __LINE__, *pedal, src_port, dst_port, r);
 #ifdef VERBOSE
-	 print_connections();
+	print_connections();
 #endif
 	// Bail out after an error
 	exit(-1);
@@ -143,12 +130,17 @@ void implement_pedal(char * pedal, char * old_pedal){
     }
   }
 #ifdef VERBOSE
-  Log( "%s:%d END implement_pedal %c -> %c\n",
-	  __FILE__, __LINE__, old_pedal ? *old_pedal : '_', *pedal);
+  Log( "%s:%d END implement_pedal %c\n",
+       __FILE__, __LINE__,  *pedal);
 #endif
 }
 
-void deimplement_pedal(char * pedal){
+
+// Disconnet the jack pipes that lead into this pedal.  `pedal` is the
+// old pedal being disconected.  `new_pedal` is the pedal that has
+// replaced it.  Before connecting anythiong from `pedal` ensure
+// `new_pedal` does not need it too.  
+void deimplement_pedal(char * pedal, char * new_pedal){
 #ifdef VERBOSE
   Log( "%s:%d\n", __FILE__, __LINE__);
 #endif
@@ -157,6 +149,7 @@ void deimplement_pedal(char * pedal){
   }
   
   struct pedal_config * pc;
+  struct pedal_config * npc;
   switch (*pedal) {
   case 'A':
     pc = &pedals.pedal_configA;
@@ -170,25 +163,45 @@ void deimplement_pedal(char * pedal){
   default:
     assert(0);
   }
+  switch (*new_pedal) {
+  case 'A':
+    npc = &pedals.pedal_configA;
+    break;
+  case 'B':
+    npc = &pedals.pedal_configB;
+    break;
+  case 'C':
+    npc = &pedals.pedal_configC;
+    break;
+  default:
+    assert(0);
+  }
+
   for (unsigned i = 0; i < pc->n_connections; i++){
 
-    // The naems of the jack ports to disconnet
+    // The names of the jack ports to disconnet
     if(pc->connections[i].ports[0]){
       // But only if they are existing.  They might have been deleted
       // if they are in the new configuration
       char * src_port = pc->connections[i].ports[0];
       char * dst_port = pc->connections[i].ports[1];
 
-      // Check that the connection exists before disconnecting it.
-    
-      /* jack_port_t * s = jack_port_by_name(CLIENT, src_port); */
-      /* jack_port_t * d = jack_port_by_name(CLIENT, dst_port); */
-      /* if(!jack_port_connected_to(s, dst_port)){ */
-      /*   Log( "WON'T disconnect %s -> %s\n", src_port, dst_port); */
-      /* }else if(!jack_port_connected_to(d, src_port)){ */
-      /*   Log( "WON'T disconnect %s -> %s\n", dst_port, src_port); */
-      /* }else{ */
-
+      // Check if this connection is in new_pedal.  If so ignore it
+      int flag = 0;  // Set to 1 if we need to ignore this connection
+      for(int k = 0; k < npc->n_connections; k++){
+	const char * nsrc_port = npc->connections[k].ports[0];
+	const char * ndst_port = npc->connections[k].ports[1];
+	if(!strcmp(nsrc_port, src_port) && !strcmp(ndst_port, dst_port)){
+	  flag = 1;
+	  break;
+	}
+      }
+      if(flag == 1){
+	// TYhio sconnection is still needed
+	continue;
+      }
+      
+      // Check that the connection exists before disconnecting it.      
       if(connected(src_port, dst_port)){
 	int r = jack_disconnect(CLIENT, src_port, dst_port);  
 	if(r != 0 && r != EEXIST){
@@ -197,7 +210,7 @@ void deimplement_pedal(char * pedal){
 	    jack is returning -1 even though it has disconected the
 	    connection.  So double check.  If the ports are still
 	    connected then exit
-	   */
+	  */
 	  int bail_out = connected(src_port, dst_port);
 	  
  	  Log("%s:%d: FAILURE  Pedal: %c %s -> %s  "
@@ -224,7 +237,7 @@ int connected(const char * port_a, const char * port_b) {
   int res1 = jack_port_connected_to(jpt_a, port_b);
   int res2 = jack_port_connected_to(jpt_b, port_a);
   Log( "%s:%d port_a: %s port_b: %s res1: %d res2: %d\n",
-	  __FILE__, __LINE__, port_a, port_b, res1, res2);
+       __FILE__, __LINE__, port_a, port_b, res1, res2);
 #endif
   return jack_port_connected_to(jpt_a, port_b);
 }
@@ -352,17 +365,15 @@ void clear_jack(){
 int load_pedal(char p){
   int i;
   FILE * fd;
-  char  scriptname[PATH_MAX];
+  char  scriptname[PATH_MAX*2];
 
-  const char * path_mi_root;
   int ch;
 
   /* We do not want buffer overruns... */
   const uint LINE_MAX = 1024;
   char line[LINE_MAX];
   char pedal;
-  path_mi_root = getenv("PATH_MI_ROOT");
-  
+
   pedal = p;
   switch (p){
   case 'A':
@@ -375,7 +386,7 @@ int load_pedal(char p){
     assert(0);
     break;
   }
-  sprintf(scriptname, "%s/PEDALS/%c", path_mi_root, pedal);
+  assert(snprintf(scriptname, PATH_MAX, "%s/PEDALS/%c", home_dir, pedal) < PATH_MAX);
 
   Log( "Opening script: %s\n", scriptname);
   fd = fopen(scriptname, "r");
@@ -415,13 +426,49 @@ void jack_error_cb(const char * msg){
   Log( "JACK ERROR: %s\n", msg);
 }
 
+// USB keyboards are linked to from known locations based on the
+// vendor and product codes (hexadecimal values for USB device IDs).
+// The path constructed from the USB device ID (in /dev/input/by-id/)
+// is a lionk to the actual device
+int get_foot_pedal_fd(const char * vendor_code, const char * product_code) {
+
+  // Path to the link
+  char device_link_path[PATH_MAX];
+
+  // Path to the device
+  char device_path[PATH_MAX];
+
+  assert(snprintf(device_link_path,
+		  PATH_MAX,
+		  "/dev/input/by-id/usb-%s_%s-event-kbd",
+		  vendor_code, product_code) < PATH_MAX);
+
+  // Get actual path to device
+  char * device_path_p;
+  device_path_p = realpath(device_link_path, device_path);
+  
+  if(device_path_p == NULL) {
+    fprintf(stderr, "Error %s\n", strerror(errno));
+    return errno;
+  }
+
+  // This is a property of `realpath(3)` when it succeeds
+  assert(device_path_p == device_path);
+  int result;
+  result = open(device_path, O_RDONLY);
+  if( result < 0 ){
+    fprintf(stderr, "Error %s\n", strerror(errno));
+  }
+  return result;
+}
+
 int main(int argc, char * argv[]) {
 
   // Defined in jack.h(?)
   jack_status_t status;
 
-  unsigned buff_size = 1024;
-  char buf[buff_size];
+  unsigned buff_size = 1023;
+  char buf[buff_size + 1];
 
   fd_set rfds;
   struct timeval tv;
@@ -430,7 +477,6 @@ int main(int argc, char * argv[]) {
   unsigned yalv;//, last_yalv;
   uint8_t key_b[KEY_MAX/8 + 1];
   char * mi_root;
-  char home_dir[PATH_MAX + 1];
 
   struct sigaction act;
   memset (&act, 0, sizeof (act));
@@ -442,17 +488,26 @@ int main(int argc, char * argv[]) {
   }
 
 
+  mi_root = getenv("PATH_MI_ROOT");
+  if(!mi_root){
+    mi_root = "/home/patch/ModHostPedal";
+  }
+  assert(snprintf(home_dir, PATH_MAX, "%s", mi_root) <= PATH_MAX);
+  if(chdir(home_dir)){
+    // FIXME An error message
+    assert(0);
+  }
+
   // Initialise the definitions of pedals
   // Signal with HUP to change
   initialise_pedals();
   
-  mi_root = getenv("PATH_MI_ROOT");
-  assert(snprintf(home_dir, PATH_MAX, "%s", mi_root) <= PATH_MAX);
-  chdir(home_dir);
-
   pid_t pid = getpid();
-  int fd_pid = open(".driver.pid", O_WRONLY);
-  assert(fd_pid);
+  int fd_pid = open(".driver.pid", O_WRONLY|O_CREAT, 0644);
+  if(fd_pid < 0){
+    Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+    exit(fd_pid);
+  }
   
   // Lock the file because the front end used this to communicate with
   // this programme.  
@@ -472,7 +527,6 @@ int main(int argc, char * argv[]) {
   assert(pid_res > 0);
 
   
-  /* printf("Driver getting started in %s\n", home_dir); */
 
   /* Set up the client for jack */
   CLIENT = jack_client_open ("client_name", JackNullOption, &status);
@@ -486,13 +540,11 @@ int main(int argc, char * argv[]) {
   }
 
   // The keyboard/pedal
-  int fd;
-  fd = open("/dev/input/event0", O_RDONLY);
-  if(fd < 0) {
-    printf("Error %s\n", strerror(errno));
+  int fd = get_foot_pedal_fd("1a86","e026");
+  if(fd < 0){
     return fd;
   }
-
+  
   unsigned last_yalv = 0;
 
   char * current_pedal = NULL;
@@ -504,7 +556,7 @@ int main(int argc, char * argv[]) {
   Log("Starting main loop\n");
   while(RUNNING == 1){
 #ifdef PROFILE
-     if(loop_limit++ > 12){
+    if(loop_limit++ > 12){
       RUNNING = 0;
     }
 #endif
@@ -522,7 +574,7 @@ int main(int argc, char * argv[]) {
 	
 	// Interupted by a signal
 	Log( "%s:%d: signaled: %d\n",
-		__FILE__, __LINE__, signaled);
+	     __FILE__, __LINE__, signaled);
 	if(signaled){
 	  fprintf(stderr, "signaled\n");
 	  destroy_pedals();
@@ -566,11 +618,17 @@ int main(int argc, char * argv[]) {
 
 	  gettimeofday(&a, NULL);
 
-	  implement_pedal(current_pedal, old_pedal);
+	  implement_pedal(current_pedal);
 
 	  gettimeofday(&b, NULL);
 
-	  deimplement_pedal(old_pedal);
+	  deimplement_pedal(old_pedal, current_pedal);
+/* #ifdef VERBOSE */
+/* 	  Log("%s:%d implement pedal: %c", */
+/* 	      __FILE__, __LINE__, current_pedal); */
+/* 	  struct pedal_config * pc = get_pedal_config(*current_pedal); */
+/* 	  assert(pc->connections[0].ports); */
+/* #endif */
 
 	  gettimeofday(&c, NULL);
 
@@ -580,35 +638,42 @@ int main(int argc, char * argv[]) {
 
 	  
 	  Log( "Deimplement %c: %ld\n", old_pedal?*old_pedal:'-',
-		  ((c.tv_sec - b.tv_sec) * 1000000) +
-		  (c.tv_usec - b.tv_usec));
+	       ((c.tv_sec - b.tv_sec) * 1000000) +
+	       (c.tv_usec - b.tv_usec));
 	  Log("Total: %ld\n", ((c.tv_sec - a.tv_sec) * 1000000) +
-	  	 (c.tv_usec - a.tv_usec));
+	      (c.tv_usec - a.tv_usec));
 	}
 
-	// Write a record of the pedal for the front end to read.  If
-	// there is one.
+	// Write a record of the pedal in a known location so other
+	// programmes can know what pedal is selected
 	int fd_pedal;
 	char file_name[PATH_MAX];
-	const char * path_mi_root = getenv("PATH_MI_ROOT");
-	snprintf(file_name, PATH_MAX, "%s/PEDALS/.PEDAL", path_mi_root);
+	assert(snprintf(file_name, PATH_MAX, "%s/PEDALS/.PEDAL", home_dir) < PATH_MAX);
 	fd_pedal = open(file_name, O_WRONLY); // File must exist
-	if(fd < 0) {
-	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	if(fd_pedal < 0) {
+	  Log("%s:%d: Failed to open %s. Error %s\n",
+	      __FILE__, __LINE__, file_name, strerror(errno));
 	  return fd;
 	}
 
-	// Lock the file so the front end does not get confused. It
-	// will lock it too
+	// Programmes using this file must get a lock to read it.  
 	if(!fcntl(fd_pedal, F_SETLK, F_WRLCK)){
-	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	  Log("%s:%d: Failed to lock %s. Error %s\n",
+	      __FILE__, __LINE__, file_name, strerror(errno));
+	  /* Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno)); */
+	  return -1;
+	}
+	
+	if(dprintf(fd_pedal,
+		   "%c", current_pedal ? *current_pedal : ' ') <= 0){
+	  Log("%s:%d: Failed to write to %s. Error %s\n",
+	      __FILE__, __LINE__, file_name, strerror(errno));
 	  return -1;
 	}
 
-	dprintf(fd_pedal, "%c", current_pedal ? *current_pedal : ' ');
-
 	if(close(fd_pedal) < 0){
-	  Log("%s:%d: Error %s\n", __FILE__, __LINE__, strerror(errno));
+	  Log("%s:%d: Failed to close %s. Error %s\n",
+	      __FILE__, __LINE__, file_name, strerror(errno));
 	  return -1;
 	}	
       }
@@ -630,7 +695,7 @@ int main(int argc, char * argv[]) {
 
 
 //+===========+++++========++++++=================
-// useful but borring functions
+// useful but boring functions
 //
 
 void Log(char * sp, ...){
@@ -642,8 +707,8 @@ void Log(char * sp, ...){
   va_list argptr;
   va_start(argptr, sp);
   vsnprintf(LOGBUFFER, MAX_LOG, sp, argptr);
-     //int fd = open(log_fn, O_APPEND|O_CREAT, 0644); //S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH );
-     int fd = open(log_fn,  O_WRONLY | O_CREAT | O_APPEND , 0644);
+  //int fd = open(log_fn, O_APPEND|O_CREAT, 0644); //S_IWUSR|S_IRUSR|S_IRGRP|S_IROTH );
+  int fd = open(log_fn,  O_WRONLY | O_CREAT | O_APPEND , 0644);
   if(fd < 0){
     fprintf(stderr, "%s:%d: Failed to open %s.  Error: %s\n",
 	    __FILE__, __LINE__, log_fn, strerror(errno));
@@ -663,6 +728,7 @@ void Log(char * sp, ...){
 	    __FILE__, __LINE__, strerror(errno));
     exit(-1);
   }
+  fprintf(stderr, LOGBUFFER);
 }
 
 void print_connections() {
@@ -757,27 +823,44 @@ void free_connection(struct jack_connection  * jc){
   }
 }
 
-void clean_cfg(const struct pedal_config * pc_in, struct pedal_config * pc_ret){
+// TODO: Comment this.  Why?  What?
+// `pc_in` is a pedal that is being selected
+// `pc_ret` is the pedal that was selected
+
+// I think the (bad) idesa was to remove in common connections from
+// the old pipe so that when it is dissabled it does not disable pipes
+// in the new connection that have already been made.  This will never
+// work properly as these are beiong removed by editing the pedal
+// configuration that is constant.
+
+// Because a selected pedal is enabled before the previous pedal is
+// disabled this is important if it turns out that they are the same
+// pedal.  Which is possible.  Two pedal configuratiuons can be
+// identical.  But we must find another way to do it.
+void clean_cfg(const struct pedal_config * pc_in,
+	       struct pedal_config * pc_ret){
+  
   for (unsigned i = 0; i < pc_in->n_connections; i++){
+    // For each connection in the new pedal...
     char * src_port = pc_in->connections[i].ports[0];
     char * dst_port = pc_in->connections[i].ports[1];
     for (unsigned j = 0; j < pc_ret->n_connections; j++){
+      // ...for each connection in the old pedal....
       char * s = pc_ret->connections[j].ports[0];
       char * d = pc_ret->connections[j].ports[1];
 
       if(s && d){
 	if((!strcmp(s, src_port) && !strcmp(d, dst_port)) ||
 	   (!strcmp(d, src_port) && !strcmp(s, dst_port))){
-	  // This connection is in pc_in and pc_ret so remove from
-	  // pc_ret
+	  //...this connection, a Jack pipe, is in both
 	  free_connection(&pc_ret->connections[i]);
 	}
       }else{
 	Log( "%s:%d ports s: %s d: %s %s/%s\n",
-		__FILE__, __LINE__,
-		s?" OK ":" NULL ",
-		d?" OK ":" NULL ",
-		src_port, dst_port);
+	     __FILE__, __LINE__,
+	     s?" OK ":" NULL ",
+	     d?" OK ":" NULL ",
+	     src_port, dst_port);
       }
     }
   }
